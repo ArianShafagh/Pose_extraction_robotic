@@ -16,6 +16,9 @@ class BoardConfig:
     marker_len_m: float
     dictionary: str = "DICT_5X5_100"
     legacy_pattern: bool = False
+    # Also use the 4 corners of every ArUco marker as calibration points
+    # (needed for small boards with few inner chessboard corners).
+    use_marker_corners: bool = False
 
     @classmethod
     def load(cls, path: str | Path) -> "BoardConfig":

@@ -1,12 +1,13 @@
-# ChArUco board used for per-camera intrinsic calibration.
-# PLACEHOLDER VALUES - replace with your real board before calibrating.
-# Measure square/marker size on the PRINTED board with a ruler (meters).
-squares_x: 7            # number of chessboard squares along X (columns)
-squares_y: 5            # number of chessboard squares along Y (rows)
-square_len_m: 0.040     # side length of one chessboard square
-marker_len_m: 0.030     # side length of one ArUco marker (must be < square_len_m)
-dictionary: DICT_5X5_100
-# Boards generated with OpenCV < 4.6 (or calib.io with "legacy" option) use a
-# different corner layout when squares_y is even. Set true if detection works
-# but corner IDs look scrambled / calibration error is huge.
+# ChArUco board used for per-camera intrinsic calibration: charuco_A3.pdf
+# (3x2 squares on A3, generated with OpenCV's layout - verified pixel-exact against the PDF).
+# Sizes are the PDF values at 100% print scale. If the printer scaled the page,
+# measure one square on the PRINT with a ruler and scale both lengths accordingly.
+squares_x: 3
+squares_y: 2
+square_len_m: 0.115     # 115 mm
+marker_len_m: 0.0862    # 86.2 mm (0.75 x square)
+dictionary: DICT_4X4_50 # marker ids 0, 1, 2
 legacy_pattern: false
+# A 3x2 board has only 2 inner chessboard corners, so the 4 corners of each of
+# the 3 markers are used as well -> up to 14 points per frame.
+use_marker_corners: true

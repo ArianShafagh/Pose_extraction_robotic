@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from moppose.calib.charuco import Detection, board_object_points, detect, is_degenerate, make_detector
+from moppose.calib.charuco import Detection, Target, is_degenerate
 from moppose.io.video import iter_frames, open_video
 
 MIN_VIEWS = 8
@@ -42,15 +42,13 @@ class CalibResult:
 # detection
 # ---------------------------------------------------------------------------
 def collect_detections(
-    board: cv2.aruco.CharucoBoard,
+    target: Target,
     videos: list[Path],
     every_s: float,
     min_corners: int,
     min_sharpness: float,
 ) -> tuple[list[Detection], tuple[int, int], dict]:
     """Run ChArUco detection on frames sampled every `every_s` seconds."""
-    detector = make_detector(board)
-    obj_all = board_object_points(board)
     dets: list[Detection] = []
     size = None
     stats = {"frames": 0, "with_board": 0, "too_few": 0, "blurry": 0, "degenerate": 0}
@@ -67,7 +65,7 @@ def collect_detections(
         total = int(n / fps / every_s) + 1 if n > 0 else None
         for fr in tqdm(iter_frames(vid, every_s=every_s), total=total, desc=f"detect {Path(vid).name}", unit="f"):
             stats["frames"] += 1
-            d = detect(detector, fr.image, t=fr.t, frame_index=fr.index)
+            d = target.detect(fr.image, t=fr.t, frame_index=fr.index)
             if d is None:
                 continue
             stats["with_board"] += 1
@@ -77,7 +75,7 @@ def collect_detections(
             if d.sharpness < min_sharpness:
                 stats["blurry"] += 1
                 continue
-            if is_degenerate(obj_all[d.ids]):
+            if is_degenerate(target.obj[d.ids]):
                 stats["degenerate"] += 1
                 continue
             dets.append(d)
@@ -162,7 +160,7 @@ def _fit_pinhole(obj, img, size):
 
 
 def calibrate(
-    board: cv2.aruco.CharucoBoard,
+    target: Target,
     dets: list[Detection],
     size: tuple[int, int],
     model: str,
@@ -170,7 +168,7 @@ def calibrate(
     max_iter: int = 15,
 ) -> CalibResult:
     """Fit `model` ("fisheye" | "pinhole") with iterative rejection of bad views."""
-    obj_all = board_object_points(board)
+    obj_all = target.obj
     views = list(dets)
     rejected: list[Detection] = []
     K0 = None

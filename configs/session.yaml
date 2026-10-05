@@ -20,7 +20,7 @@ cameras:
 
 calibration:
   sample_every_s: 0.25      # look at one frame every N seconds of calibration video
-  min_corners: 12           # ignore detections with fewer ChArUco corners
+  min_corners: 8            # ignore detections with fewer board points (A3 board: max 14)
   min_sharpness: 40.0       # variance of Laplacian; lower = blurrier frames are dropped
-  max_views: 60             # frames actually used in the optimisation
+  max_views: 80             # frames used in the optimisation (small board -> use many)
   outlier_rms_px: 2.0       # drop views whose own reprojection RMS exceeds this (iteratively)

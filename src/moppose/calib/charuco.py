@@ -39,11 +39,6 @@ def make_board(cfg: BoardConfig) -> cv2.aruco.CharucoBoard:
     return board
 
 
-def board_object_points(board: cv2.aruco.CharucoBoard) -> np.ndarray:
-    """(M, 3) float64 3D position of every ChArUco corner id in board coordinates (meters)."""
-    return np.asarray(board.getChessboardCorners(), dtype=np.float64).reshape(-1, 3)
-
-
 def make_detector(board: cv2.aruco.CharucoBoard) -> cv2.aruco.CharucoDetector:
     det_params = cv2.aruco.DetectorParameters()
     # Subpixel refinement of marker corners; ChArUco corners are refined separately.
@@ -68,21 +63,85 @@ def sharpness(gray: np.ndarray, pts: np.ndarray | None = None) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def detect(
-    detector: cv2.aruco.CharucoDetector,
-    image: np.ndarray,
-    t: float = 0.0,
-    frame_index: int = 0,
-) -> Detection | None:
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    ch_corners, ch_ids, _, _ = detector.detectBoard(gray)
-    if ch_ids is None or len(ch_ids) == 0:
-        return None
-    corners = ch_corners.reshape(-1, 2).astype(np.float32)
-    return Detection(
-        t=t, frame_index=frame_index, corners=corners,
-        ids=ch_ids.reshape(-1).astype(np.int32), sharpness=sharpness(gray, corners),
-    )
+class Target:
+    """A ChArUco board seen as a set of calibration points with stable integer ids.
+
+    ids 0 .. n_charuco-1            inner chessboard corners
+    ids n_charuco + 4*k + j         corner j (clockwise from top-left) of the k-th marker
+                                    of the board - only if cfg.use_marker_corners
+
+    Small boards (e.g. 3x2 squares = only 2 inner corners) need the marker corners
+    to have enough points per view.
+    """
+
+    def __init__(self, cfg: BoardConfig):
+        self.cfg = cfg
+        self.board = make_board(cfg)
+        self.detector = make_detector(self.board)
+        chess = np.asarray(self.board.getChessboardCorners(), np.float64).reshape(-1, 3)
+        self.n_charuco = len(chess)
+        self.use_marker_corners = cfg.use_marker_corners
+        self._marker_index = {int(m): k for k, m in enumerate(np.asarray(self.board.getIds()).ravel())}
+        if self.use_marker_corners:
+            markers = np.concatenate([np.asarray(o, np.float64).reshape(4, 3) for o in self.board.getObjPoints()])
+            self.obj = np.vstack([chess, markers])
+        else:
+            self.obj = chess
+        self.charuco_offset = self._measure_charuco_offset()
+
+    def _measure_charuco_offset(self) -> np.ndarray:
+        """Systematic pixel offset of the detector's chessboard corners.
+
+        Some OpenCV versions (seen in 4.11) return ChArUco corners shifted by ~+0.5 px
+        in x and y (pixel-centre convention mismatch), while marker corners are fine.
+        Mixing both point types then biases the calibration (focal length off by
+        >1%). We render the board under a known homography, detect it and measure
+        the mean offset, so the correction follows whatever OpenCV is installed.
+        """
+        ppm = 40.0 / self.cfg.square_len_m  # 40 px per square
+        margin = 60
+        w = int(round(self.cfg.squares_x * self.cfg.square_len_m * ppm))
+        h = int(round(self.cfg.squares_y * self.cfg.square_len_m * ppm))
+        tex = self.board.generateImage((w + 2 * margin, h + 2 * margin), marginSize=margin)
+        H = np.array([[1.35, 0.12, 37.3], [-0.06, 1.28, 41.7], [2.0e-4, 1.5e-4, 1.0]])
+        size = (int(tex.shape[1] * 1.8), int(tex.shape[0] * 1.8))
+        img = cv2.warpPerspective(tex, H, size, flags=cv2.INTER_LINEAR, borderValue=255)
+        img = cv2.GaussianBlur(img, (3, 3), 0.7)
+        ch_corners, ch_ids, _, _ = self.detector.detectBoard(img)
+        if ch_ids is None or len(ch_ids) == 0:
+            return np.zeros(2)
+        # texture pixel i covers board coords [i, i+1)/ppm, so its centre is at i + 0.5
+        chess = np.asarray(self.board.getChessboardCorners(), np.float64).reshape(-1, 3)
+        tex_xy = chess[ch_ids.ravel(), :2] * ppm + margin - 0.5
+        true = cv2.perspectiveTransform(tex_xy.reshape(-1, 1, 2), H).reshape(-1, 2)
+        off = (ch_corners.reshape(-1, 2) - true).mean(0)
+        return off if np.max(np.abs(off)) > 0.1 else np.zeros(2)
+
+    @property
+    def n_points(self) -> int:
+        return len(self.obj)
+
+    def detect(self, image: np.ndarray, t: float = 0.0, frame_index: int = 0) -> Detection | None:
+        gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        ch_corners, ch_ids, m_corners, m_ids = self.detector.detectBoard(gray)
+        pts, ids = [], []
+        if ch_ids is not None and len(ch_ids):
+            pts.append(ch_corners.reshape(-1, 2) - self.charuco_offset)
+            ids.append(ch_ids.reshape(-1))
+        if self.use_marker_corners and m_ids is not None and len(m_ids):
+            for c, m in zip(m_corners, np.asarray(m_ids).ravel()):
+                k = self._marker_index.get(int(m))
+                if k is None:  # a marker of the same dictionary that is not on this board
+                    continue
+                pts.append(np.asarray(c).reshape(4, 2))
+                ids.append(self.n_charuco + 4 * k + np.arange(4))
+        if not pts:
+            return None
+        corners = np.concatenate(pts).astype(np.float32)
+        return Detection(
+            t=t, frame_index=frame_index, corners=corners,
+            ids=np.concatenate(ids).astype(np.int32), sharpness=sharpness(gray, corners),
+        )
 
 
 def is_degenerate(obj: np.ndarray, min_ratio: float = 0.15) -> bool:
@@ -98,9 +157,14 @@ def is_degenerate(obj: np.ndarray, min_ratio: float = 0.15) -> bool:
     return s[0] <= 0 or s[1] / s[0] < min_ratio
 
 
-def draw_detection(image: np.ndarray, det: Detection) -> np.ndarray:
+def draw_detection(image: np.ndarray, det: Detection, n_charuco: int | None = None) -> np.ndarray:
+    """Chessboard corners in red, marker corners in green, with their point ids."""
     out = image.copy()
-    cv2.aruco.drawDetectedCornersCharuco(out, det.corners.reshape(-1, 1, 2), det.ids.reshape(-1, 1))
+    r = max(3, image.shape[1] // 300)
+    for (x, y), i in zip(det.corners, det.ids):
+        color = (0, 0, 255) if n_charuco is None or i < n_charuco else (0, 200, 0)
+        cv2.circle(out, (int(round(x)), int(round(y))), r, color, -1)
+        cv2.putText(out, str(int(i)), (int(x) + r + 2, int(y) - r - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4 * r / 3, color, 1)
     return out
 
 

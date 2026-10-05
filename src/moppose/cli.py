@@ -73,13 +73,11 @@ def board_check(
     out: Path = typer.Option(Path("outputs/board_check")),
 ):
     """Quick test that board.yaml matches the board in a video (before a full calibration)."""
-    from moppose.calib.charuco import detect, draw_detection, guess_dictionary, make_board, make_detector
+    from moppose.calib.charuco import Target, draw_detection, guess_dictionary
     from moppose.io.video import open_video, read_frame_at
 
     cfg = BoardConfig.load(board)
-    b = make_board(cfg)
-    detector = make_detector(b)
-    n_total = len(b.getChessboardCorners())
+    target = Target(cfg)
     cap = open_video(video)
     dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / (cap.get(cv2.CAP_PROP_FPS) or 25.0)
     cap.release()
@@ -88,14 +86,16 @@ def board_check(
     for k in range(n):
         fr = read_frame_at(video, dur * (k + 0.5) / n)
         frames.append(fr.image)
-        d = detect(detector, fr.image, fr.t, fr.index)
+        d = target.detect(fr.image, fr.t, fr.index)
         c = 0 if d is None else len(d.ids)
         counts.append(c)
-        img = fr.image if d is None else draw_detection(fr.image, d)
+        img = fr.image if d is None else draw_detection(fr.image, d, target.n_charuco)
         cv2.imwrite(str(out / f"{video.stem}_{fr.t:08.2f}s_{c}corners.jpg"), img)
-    typer.echo(f"board {cfg.squares_x}x{cfg.squares_y} {cfg.dictionary}: {n_total} inner corners max")
-    typer.echo(f"corners detected per test frame: {counts}")
-    typer.echo(f"frames with >=12 corners: {sum(c >= 12 for c in counts)}/{n}   (annotated frames in {out})")
+    extra = f" + {target.n_points - target.n_charuco} marker corners" if target.use_marker_corners else ""
+    typer.echo(f"board {cfg.squares_x}x{cfg.squares_y} {cfg.dictionary}: {target.n_charuco} inner corners{extra}"
+               f" = {target.n_points} points max")
+    typer.echo(f"points detected per test frame: {counts}")
+    typer.echo(f"frames with >=8 points: {sum(c >= 8 for c in counts)}/{n}   (annotated frames in {out})")
     if guess or max(counts) == 0:
         typer.echo("\nArUco dictionary scan (dictionary, markers found, max id):")
         for name, found, max_id in guess_dictionary(frames)[:6]:
@@ -114,7 +114,7 @@ def calib_intrinsics(
 ):
     """Calibrate one camera's lens (K + distortion) from its ChArUco video(s)."""
     from moppose.calib.camera import Camera
-    from moppose.calib.charuco import make_board
+    from moppose.calib.charuco import Target
     from moppose.calib.frame_select import select_views
     from moppose.calib.intrinsics import (calibrate, choose_model, collect_detections, load_detections,
                                           save_detections)
@@ -124,7 +124,7 @@ def calib_intrinsics(
     ses = SessionConfig.load(session)
     entry = ses.camera(cam)
     cs = ses.calibration
-    b = make_board(BoardConfig.load(board))
+    target = Target(BoardConfig.load(board))
     out = ses.calib_dir
     cache = out / f"{cam}_detections.npz"
 
@@ -135,7 +135,7 @@ def calib_intrinsics(
         dets, size = load_detections(cache)
         typer.echo(f"loaded {len(dets)} cached detections from {cache} (use --redetect to redo)")
     else:
-        dets, size, stats = collect_detections(b, entry.calib_videos, cs.sample_every_s, cs.min_corners, cs.min_sharpness)
+        dets, size, stats = collect_detections(target, entry.calib_videos, cs.sample_every_s, cs.min_corners, cs.min_sharpness)
         save_detections(cache, dets, size)
         typer.echo(f"detection stats: {stats}")
     typer.echo(f"{len(dets)} usable board views, image size {size[0]}x{size[1]}")
@@ -148,7 +148,7 @@ def calib_intrinsics(
     results = {}
     for m in models:
         try:
-            r = calibrate(b, views, size, m, outlier_rms_px=cs.outlier_rms_px)
+            r = calibrate(target, views, size, m, outlier_rms_px=cs.outlier_rms_px)
         except (RuntimeError, cv2.error) as e:
             typer.secho(f"  {m}: FAILED - {e}", fg="red")
             continue

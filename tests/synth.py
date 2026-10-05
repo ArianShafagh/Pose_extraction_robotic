@@ -6,10 +6,13 @@ import cv2
 import numpy as np
 
 from moppose.calib.camera import Camera
-from moppose.calib.charuco import make_board
+from moppose.calib.charuco import Target
 from moppose.config import BoardConfig
 
 BOARD = BoardConfig(squares_x=8, squares_y=6, square_len_m=0.06, marker_len_m=0.045, dictionary="DICT_5X5_100")
+# The real board used for the project (charuco_A3.pdf): only 2 inner corners -> marker corners on.
+A3_BOARD = BoardConfig(squares_x=3, squares_y=2, square_len_m=0.115, marker_len_m=0.0862,
+                       dictionary="DICT_4X4_50", use_marker_corners=True)
 SIZE = (1280, 960)
 # Equidistant fisheye, ~170 deg diagonal field of view.
 TRUE_CAM = Camera(
@@ -22,7 +25,8 @@ TRUE_CAM = Camera(
 class Renderer:
     def __init__(self, cam: Camera = TRUE_CAM, cfg: BoardConfig = BOARD, px_per_m: float = 2500.0):
         self.cam = cam
-        self.board = make_board(cfg)
+        self.target = Target(cfg)
+        self.board = self.target.board
         self.bw = cfg.squares_x * cfg.square_len_m
         self.bh = cfg.squares_y * cfg.square_len_m
         self.px_per_m = px_per_m
@@ -41,8 +45,9 @@ class Renderer:
         lam = (normal @ t) / np.where(np.abs(denom) < 1e-12, np.nan, denom)
         pts_cam = self.rays * lam[:, None]
         pts_board = (pts_cam - t) @ R  # R^T (p - t)
-        bx = pts_board[:, 0] * self.px_per_m
-        by = pts_board[:, 1] * self.px_per_m
+        # texture pixel i covers board coords [i, i+1)/px_per_m -> its centre is at i + 0.5
+        bx = pts_board[:, 0] * self.px_per_m - 0.5
+        by = pts_board[:, 1] * self.px_per_m - 0.5
         bad = ~(lam > 0)
         bx[bad] = -1e6
         by[bad] = -1e6
@@ -56,17 +61,16 @@ class Renderer:
         return img
 
 
-def random_poses(n: int, seed: int = 0):
+def random_poses(n: int, seed: int = 0, cfg: BoardConfig = BOARD, dist=(0.35, 0.7)):
     """Board poses spread over the field of view, including the strongly distorted borders."""
     rng = np.random.default_rng(seed)
-    cfg = BOARD
     center_off = np.array([cfg.squares_x * cfg.square_len_m / 2, cfg.squares_y * cfg.square_len_m / 2, 0])
     poses = []
     while len(poses) < n:
         # direction of the board centre: angle off-axis up to ~65 deg
         off = np.deg2rad(rng.uniform(0, 65))
         az = rng.uniform(0, 2 * np.pi)
-        d = rng.uniform(0.35, 0.7)
+        d = rng.uniform(*dist)
         c = d * np.array([np.sin(off) * np.cos(az), np.sin(off) * np.sin(az), np.cos(off)])
         # board faces the camera roughly, plus random tilt
         tilt = np.deg2rad(rng.uniform(-35, 35, 3))

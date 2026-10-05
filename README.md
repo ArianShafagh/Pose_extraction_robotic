@@ -76,7 +76,19 @@ Edit [configs/session.yaml](configs/session.yaml) to point at your files and
    uv run moppose calib-check --cam cam1 --t 5
    ```
 
+### The board
+[configs/board.yaml](configs/board.yaml) is set up for `charuco_A3.pdf`: 3×2 squares of 115 mm,
+86.2 mm DICT_4X4_50 markers (ids 0–2). A 3×2 board has only 2 inner chessboard corners, so the
+marker corners are used too (`use_marker_corners: true`, up to 14 points per frame). With so few
+points per frame, calibration quality comes from **many varied frames** — in synthetic tests ~40
+views gave 0.45° ray error, ~100 views 0.15°.
+
+Some OpenCV versions return ChArUco chessboard corners shifted by ~0.5 px; `Target` measures this
+offset on a synthetic image at start-up and removes it (otherwise mixing them with marker corners
+biases the focal length by >1%).
+
 ### Tips for the ChArUco videos
+- The board is small: hold it close enough that each marker is at least ~30 px wide in the image.
 - Move slowly (security cams have long exposure → motion blur), hold still for a moment in each pose.
 - Cover the **whole image, especially corners and edges**, at different distances and tilts (±45°).
 - Keep the board flat (glue to a rigid panel); measure the printed square size with a ruler.
