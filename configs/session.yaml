@@ -1,0 +1,26 @@
+# Session description: which video belongs to which camera.
+# Paths are relative to the repo root (put footage under data/, which is gitignored).
+output_dir: outputs
+
+cameras:
+  cam1:
+    calib_videos: [data/calib/cam1.mp4]   # ChArUco videos for intrinsics (one or more)
+    videos: [data/session1/cam1.mp4]      # mopping recordings
+    # Lens model: fisheye (cv2.fisheye, equidistant) or pinhole (rational, 8 coeffs).
+    # "auto" fits both and keeps the one with lower reprojection error.
+    model: auto
+  cam2:
+    calib_videos: [data/calib/cam2.mp4]
+    videos: [data/session1/cam2.mp4]
+    model: auto
+  cam3:
+    calib_videos: [data/calib/cam3.mp4]
+    videos: [data/session1/cam3.mp4]
+    model: auto
+
+calibration:
+  sample_every_s: 0.25      # look at one frame every N seconds of calibration video
+  min_corners: 12           # ignore detections with fewer ChArUco corners
+  min_sharpness: 40.0       # variance of Laplacian; lower = blurrier frames are dropped
+  max_views: 60             # frames actually used in the optimisation
+  outlier_rms_px: 2.0       # drop views whose own reprojection RMS exceeds this (iteratively)
