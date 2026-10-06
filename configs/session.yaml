@@ -4,17 +4,17 @@ output_dir: outputs
 
 cameras:
   cam1:
-    calib_videos: [data/calib/cam1.mp4]   # ChArUco videos for intrinsics (one or more)
+    calib_videos: [data/calib/cam1.mkv]   # ChArUco videos for intrinsics (one or more)
     videos: [data/session1/cam1_20260806_160328.mkv]   # mopping recordings
     # Lens model: fisheye (cv2.fisheye, equidistant) or pinhole (rational, 8 coeffs).
     # "auto" fits both and keeps the one with lower reprojection error.
     model: auto
   cam3:
-    calib_videos: [data/calib/cam3.mp4]
+    calib_videos: [data/calib/cam3.mkv]
     videos: [data/session1/cam3_20260806_160328.mkv]
     model: auto
   cam4:
-    calib_videos: [data/calib/cam4.mp4]
+    calib_videos: [data/calib/cam4.mkv]
     videos: [data/session1/cam4_20260806_160328.mkv]
     model: auto
 

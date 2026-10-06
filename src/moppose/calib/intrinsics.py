@@ -226,14 +226,20 @@ def choose_model(results: dict[str, CalibResult]) -> str:
     return next(iter(results))
 
 
-def validity(model: str, K: np.ndarray, D: np.ndarray, size: tuple[int, int], dets: list[Detection]) -> dict:
+def validity(
+    model: str, K: np.ndarray, D: np.ndarray, size: tuple[int, int], dets: list[Detection],
+    work_pts: np.ndarray | None = None, work_w: np.ndarray | None = None,
+) -> dict:
     """How much of the image the calibration can be trusted for.
 
     covered_r   : radius (px from the principal point) inside which 99% of board corners lay
     corner_r    : radius of the farthest image corner
     monotonic_r : radius up to which the distortion curve is still increasing; beyond it the
                   model folds back and is meaningless (classic symptom of missing edge views)
-    usable      : covered_r reaches at least 80% of corner_r and the model is monotonic there
+    work_inside : (with work_pts) weighted fraction of the scene's work area (where people move)
+                  that lies inside the area the board covered
+    usable      : with work_pts: >= 95% of the work area covered and the model monotonic over it;
+                  without: covered_r reaches 80% of corner_r and the model is monotonic there
     """
     cc = K[:2, 2]
     f = float(K[0, 0])
@@ -258,8 +264,17 @@ def validity(model: str, K: np.ndarray, D: np.ndarray, size: tuple[int, int], de
     end = reach[0] if len(reach) else len(r) - 1
     fold = np.flatnonzero(np.diff(r[:end + 1]) <= 0)
     monotonic_r = float(r[fold[0]]) if len(fold) else (float("inf") if len(reach) else float(r.max()))
-    return {
+    out = {
         "covered_r": covered_r, "corner_r": corner_r, "monotonic_r": monotonic_r,
         "covered_frac": covered_r / corner_r,
         "usable": bool(covered_r >= 0.8 * corner_r and monotonic_r >= corner_r),
     }
+    if work_pts is not None and len(work_pts):
+        work_w = np.ones(len(work_pts)) if work_w is None else np.asarray(work_w, float)
+        hull = cv2.convexHull(pts.astype(np.float32))
+        inside = np.array([cv2.pointPolygonTest(hull, (float(x), float(y)), False) >= 0 for x, y in work_pts])
+        work_r = float(np.max(np.linalg.norm(work_pts - cc, axis=1)))
+        out["work_inside"] = float(np.sum(work_w * inside) / np.sum(work_w))
+        out["work_r"] = work_r
+        out["usable"] = bool(out["work_inside"] >= 0.95 and monotonic_r >= work_r)
+    return out

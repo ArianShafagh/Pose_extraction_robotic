@@ -183,7 +183,18 @@ def calib_intrinsics(
         raise typer.Exit(1)
     best = choose_model(results)
     r = results[best]
-    val = validity(best, r.K, r.D, size, dets)
+    work_pts = work_w = heat = None
+    if scene:
+        from moppose.io.motion import motion_heatmap, work_area_points
+        mcache = out / f"{cam}_motion.npz"
+        if mcache.exists() and str(np.load(mcache)["video"]) == str(scene):
+            heat = np.load(mcache)["heat"]
+        else:
+            typer.echo(f"measuring where people move in {scene.name} ...")
+            heat = motion_heatmap(scene)
+            np.savez_compressed(mcache, heat=heat, video=np.array(str(scene)))
+        work_pts, work_w = work_area_points(heat)
+    val = validity(best, r.K, r.D, size, dets, work_pts, work_w)
     camera = Camera(
         name=cam, model=best, size=size, K=r.K, D=r.D, rms=r.rms,
         meta={"views_used": len(r.views), "views_rejected": len(r.rejected),
@@ -204,16 +215,23 @@ def calib_intrinsics(
     per_view_plot(results, out / f"{cam}_per_view_rms.png")
     scene_img = read_frame_at(scene, 5.0).image if scene else bg
     cv2.imwrite(str(out / f"{cam}_undistort.jpg"), undistort_check(camera, scene_img))
+    if heat is not None:
+        from moppose.io.motion import overlay
+        hull = cv2.convexHull(np.concatenate([d.corners for d in dets]).astype(np.float32))
+        cv2.imwrite(str(out / f"{cam}_work_area.jpg"), overlay(scene_img, heat, hull))
     typer.echo(f"report images in {out}: {cam}_coverage.jpg, {cam}_per_view_rms.png, {cam}_undistort.jpg")
     if r.rms > 1.0:
         typer.secho("RMS > 1px: check board.yaml sizes, blur, and the coverage image.", fg="yellow")
     typer.echo(f"board reached {val['covered_r']:.0f}px from the image centre; image corners are at "
                f"{val['corner_r']:.0f}px ({100 * val['covered_frac']:.0f}%); model valid up to {val['monotonic_r']:.0f}px")
+    if "work_inside" in val:
+        typer.echo(f"area where people move in the scene video: {100 * val['work_inside']:.0f}% inside the board "
+                   f"coverage ({cam}_work_area.jpg)")
     if val["usable"]:
-        typer.secho("calibration covers the image: USABLE", fg="green", bold=True)
+        typer.secho("calibration covers the working area: USABLE", fg="green", bold=True)
     else:
-        typer.secho("NOT USABLE outside the centre: record board views near the image edges and corners "
-                    "(see the coverage image), then run again with --redetect", fg="red", bold=True)
+        typer.secho("NOT USABLE: the board did not cover where people move - record board views there "
+                    "(see coverage/work_area images), then run again with --redetect", fg="red", bold=True)
 
 
 @app.command("calib-check")
