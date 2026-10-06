@@ -1,0 +1,60 @@
+name: cam4
+model: fisheye
+size:
+- 1280
+- 1024
+K:
+- - 901.874245213704
+  - 0.0
+  - 635.9502245513272
+- - 0.0
+  - 907.4387784249369
+  - 505.31126491751155
+- - 0.0
+  - 0.0
+  - 1.0
+D:
+- -0.1276173413181597
+- 0.17523268639915932
+- -0.5371858810584607
+- 0.5480686209618535
+R:
+- - 1.0
+  - 0.0
+  - 0.0
+- - 0.0
+  - 1.0
+  - 0.0
+- - 0.0
+  - 0.0
+  - 1.0
+t:
+- 0.0
+- 0.0
+- 0.0
+rms: 0.75502375796994
+meta:
+  views_used: 77
+  views_rejected: 3
+  rms_by_model:
+    fisheye: 0.75502375796994
+    pinhole: 0.7503087492640049
+  calib_videos:
+  - C:\Users\Arian\Desktop\camera\data\calib\cam4.mkv
+  calib_frame_maps:
+  - crop:
+    - 0
+    - 0
+    - 1280
+    - 1024
+    out_size:
+    - 1280
+    - 1024
+  validity:
+    covered_r: 532.2403793466993
+    corner_r: 826.9450508691359
+    monotonic_r: .inf
+    covered_frac: 0.6436224254408488
+    usable: true
+    work_inside: 0.9591342650702094
+    work_r: 767.1063390562069
