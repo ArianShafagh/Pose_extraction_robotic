@@ -19,6 +19,7 @@ import numpy as np
 from tqdm import tqdm
 
 from moppose.calib.charuco import Detection, Target, is_degenerate
+from moppose.calib.frame_map import FrameMap
 from moppose.io.video import iter_frames, open_video
 
 MIN_VIEWS = 8
@@ -47,17 +48,24 @@ def collect_detections(
     every_s: float,
     min_corners: int,
     min_sharpness: float,
+    frame_maps: list[FrameMap | None] | None = None,
 ) -> tuple[list[Detection], tuple[int, int], dict]:
-    """Run ChArUco detection on frames sampled every `every_s` seconds."""
+    """Run ChArUco detection on frames sampled every `every_s` seconds.
+
+    `frame_maps[i]` (optional) crops/resizes frames of videos[i] onto the scene pixel grid first.
+    """
     dets: list[Detection] = []
     size = None
     stats = {"frames": 0, "with_board": 0, "too_few": 0, "blurry": 0, "degenerate": 0}
-    for vid in videos:
+    frame_maps = frame_maps or [None] * len(videos)
+    for vid, fm in zip(videos, frame_maps):
         cap = open_video(vid)
         vsize = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         cap.release()
+        if fm is not None:
+            vsize = fm.out_size
         if size is None:
             size = vsize
         elif size != vsize:
@@ -65,7 +73,8 @@ def collect_detections(
         total = int(n / fps / every_s) + 1 if n > 0 else None
         for fr in tqdm(iter_frames(vid, every_s=every_s), total=total, desc=f"detect {Path(vid).name}", unit="f"):
             stats["frames"] += 1
-            d = target.detect(fr.image, t=fr.t, frame_index=fr.index)
+            img = fr.image if fm is None else fm.apply(fr.image)
+            d = target.detect(img, t=fr.t, frame_index=fr.index)
             if d is None:
                 continue
             stats["with_board"] += 1
@@ -84,9 +93,11 @@ def collect_detections(
     return dets, size, stats
 
 
-def save_detections(path: Path, dets: list[Detection], size: tuple[int, int]) -> None:
+def save_detections(path: Path, dets: list[Detection], size: tuple[int, int], key: str = "") -> None:
+    """`key` describes the inputs (videos, frame maps, board); a cache with another key is stale."""
     np.savez_compressed(
         path,
+        key=np.array(key),
         size=np.array(size),
         t=np.array([d.t for d in dets]),
         frame_index=np.array([d.frame_index for d in dets]),
@@ -97,7 +108,7 @@ def save_detections(path: Path, dets: list[Detection], size: tuple[int, int]) ->
     )
 
 
-def load_detections(path: Path) -> tuple[list[Detection], tuple[int, int]]:
+def load_detections(path: Path) -> tuple[list[Detection], tuple[int, int], str]:
     z = np.load(path)
     offs = np.concatenate([[0], np.cumsum(z["counts"])])
     dets = [
@@ -106,7 +117,8 @@ def load_detections(path: Path) -> tuple[list[Detection], tuple[int, int]]:
                   sharpness=float(z["sharpness"][i]))
         for i in range(len(z["t"]))
     ]
-    return dets, tuple(int(v) for v in z["size"])
+    key = str(z["key"]) if "key" in z.files else ""
+    return dets, tuple(int(v) for v in z["size"]), key
 
 
 # ---------------------------------------------------------------------------
@@ -212,3 +224,42 @@ def choose_model(results: dict[str, CalibResult]) -> str:
     if "fisheye" in results and "pinhole" in results:
         return "pinhole" if results["pinhole"].rms < 0.9 * results["fisheye"].rms else "fisheye"
     return next(iter(results))
+
+
+def validity(model: str, K: np.ndarray, D: np.ndarray, size: tuple[int, int], dets: list[Detection]) -> dict:
+    """How much of the image the calibration can be trusted for.
+
+    covered_r   : radius (px from the principal point) inside which 99% of board corners lay
+    corner_r    : radius of the farthest image corner
+    monotonic_r : radius up to which the distortion curve is still increasing; beyond it the
+                  model folds back and is meaningless (classic symptom of missing edge views)
+    usable      : covered_r reaches at least 80% of corner_r and the model is monotonic there
+    """
+    cc = K[:2, 2]
+    f = float(K[0, 0])
+    pts = np.concatenate([d.corners for d in dets])
+    covered_r = float(np.percentile(np.linalg.norm(pts - cc, axis=1), 99))
+    w, h = size
+    corner_r = float(max(np.linalg.norm(np.array(p, float) - cc) for p in [(0, 0), (w, 0), (0, h), (w, h)]))
+    if model == "fisheye":
+        th = np.linspace(0.0, np.pi * 0.75, 4000)  # up to 135 deg off-axis
+        k = D
+        r = f * th * (1 + k[0] * th**2 + k[1] * th**4 + k[2] * th**6 + k[3] * th**8)
+    else:  # radial part of the rational model along the x axis
+        x = np.linspace(0.0, 4.0, 4000)
+        k = np.zeros(8)
+        k[:min(8, len(D))] = D[:8]
+        r2 = x * x
+        rad = (1 + k[0] * r2 + k[1] * r2**2 + k[4] * r2**3) / (1 + k[5] * r2 + k[6] * r2**2 + k[7] * r2**3)
+        r = f * x * rad
+    # Only the part of the curve that maps into the image matters: it must keep increasing
+    # until it reaches the image corner radius.
+    reach = np.flatnonzero(r >= corner_r)
+    end = reach[0] if len(reach) else len(r) - 1
+    fold = np.flatnonzero(np.diff(r[:end + 1]) <= 0)
+    monotonic_r = float(r[fold[0]]) if len(fold) else (float("inf") if len(reach) else float(r.max()))
+    return {
+        "covered_r": covered_r, "corner_r": corner_r, "monotonic_r": monotonic_r,
+        "covered_frac": covered_r / corner_r,
+        "usable": bool(covered_r >= 0.8 * corner_r and monotonic_r >= corner_r),
+    }

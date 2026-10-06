@@ -76,3 +76,18 @@ def test_a3_board_fisheye_recovers_intrinsics(a3_detections):
     r, dets = a3_detections
     views = select_views(dets, SIZE, max_views=80)
     _check_recovered(calibrate(r.target, views, SIZE, "fisheye"), max_p95_deg=0.4)
+
+
+def test_validity_flags_central_only_coverage():
+    from moppose.calib.charuco import Detection
+    from moppose.calib.intrinsics import validity
+
+    K = np.array([[600.0, 0, 640], [0, 600.0, 512], [0, 0, 1]])
+    centre = Detection(0.0, 0, np.array([[540.0, 412], [740, 612]], np.float32), np.array([0, 1]), 100.0)
+    corners = Detection(0.0, 0, np.array([[5.0, 5], [1275, 1019]], np.float32), np.array([0, 1]), 100.0)
+    good_D = np.array([0.05, -0.02, 0.008, -0.002])
+    folding_D = np.array([-0.16, -0.81, 8.98, -24.78])  # what cam1 got from centre-only views
+    assert not validity("fisheye", K, good_D, (1280, 1024), [centre])["usable"]
+    assert validity("fisheye", K, good_D, (1280, 1024), [centre, corners])["usable"]
+    v = validity("fisheye", K, folding_D, (1280, 1024), [centre, corners])
+    assert not v["usable"] and v["monotonic_r"] < v["corner_r"]

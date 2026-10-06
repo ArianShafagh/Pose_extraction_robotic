@@ -115,28 +115,52 @@ def calib_intrinsics(
     """Calibrate one camera's lens (K + distortion) from its ChArUco video(s)."""
     from moppose.calib.camera import Camera
     from moppose.calib.charuco import Target
+    from moppose.calib.frame_map import auto_map, check_map
     from moppose.calib.frame_select import select_views
     from moppose.calib.intrinsics import (calibrate, choose_model, collect_detections, load_detections,
-                                          save_detections)
+                                          save_detections, validity)
     from moppose.io.video import read_frame_at
     from moppose.viz.calib_report import coverage_image, per_view_plot, undistort_check
 
     ses = SessionConfig.load(session)
     entry = ses.camera(cam)
     cs = ses.calibration
-    target = Target(BoardConfig.load(board))
+    board_cfg = BoardConfig.load(board)
+    target = Target(board_cfg)
     out = ses.calib_dir
     cache = out / f"{cam}_detections.npz"
 
-    for v in entry.calib_videos:
+    for v in entry.calib_videos + entry.videos:
         if not v.exists():
-            raise typer.BadParameter(f"calibration video not found: {v}")
-    if cache.exists() and not redetect:
-        dets, size = load_detections(cache)
+            raise typer.BadParameter(f"video not found: {v}")
+
+    # Calibration exports can differ from the scene recordings (resolution, black bars).
+    # Map calibration frames onto the scene pixel grid so K is valid for the scene videos.
+    scene = entry.videos[0] if entry.videos else None
+    fmaps = [auto_map(v, scene) if scene else None for v in entry.calib_videos]
+    for v, fm in zip(entry.calib_videos, fmaps):
+        if fm is not None and not fm.is_identity:
+            x, y, w, h = fm.crop
+            typer.echo(f"{v.name}: using picture area x={x} y={y} {w}x{h} -> scaled to {fm.out_size[0]}x{fm.out_size[1]}")
+            chk = check_map(fm, v, scene)
+            if chk.get("ok"):
+                msg = f"  background check vs {scene.name}: max shift {chk['corner_shift_px']:.2f}px ({chk['inliers']} matches)"
+                typer.secho(msg, fg="green" if chk["corner_shift_px"] < 2.0 else "yellow")
+                if chk["corner_shift_px"] >= 2.0:
+                    typer.secho("  mapping looks off: camera moved/zoomed between recordings?", fg="yellow")
+            else:
+                typer.secho(f"  background check failed: {chk.get('reason')}", fg="yellow")
+
+    key = repr(([str(v) for v in entry.calib_videos], [fm.to_dict() if fm else None for fm in fmaps],
+                vars(board_cfg), cs.sample_every_s, cs.min_corners, cs.min_sharpness))
+    cached = load_detections(cache) if cache.exists() and not redetect else None
+    if cached is not None and cached[2] == key:
+        dets, size, _ = cached
         typer.echo(f"loaded {len(dets)} cached detections from {cache} (use --redetect to redo)")
     else:
-        dets, size, stats = collect_detections(target, entry.calib_videos, cs.sample_every_s, cs.min_corners, cs.min_sharpness)
-        save_detections(cache, dets, size)
+        dets, size, stats = collect_detections(target, entry.calib_videos, cs.sample_every_s, cs.min_corners,
+                                               cs.min_sharpness, fmaps)
+        save_detections(cache, dets, size, key)
         typer.echo(f"detection stats: {stats}")
     typer.echo(f"{len(dets)} usable board views, image size {size[0]}x{size[1]}")
 
@@ -159,11 +183,14 @@ def calib_intrinsics(
         raise typer.Exit(1)
     best = choose_model(results)
     r = results[best]
+    val = validity(best, r.K, r.D, size, dets)
     camera = Camera(
         name=cam, model=best, size=size, K=r.K, D=r.D, rms=r.rms,
         meta={"views_used": len(r.views), "views_rejected": len(r.rejected),
               "rms_by_model": {k: float(v.rms) for k, v in results.items()},
-              "calib_videos": [str(p) for p in entry.calib_videos]},
+              "calib_videos": [str(p) for p in entry.calib_videos],
+              "calib_frame_maps": [fm.to_dict() if fm else None for fm in fmaps],
+              "validity": val},
     )
     path = out / f"{cam}_intrinsics.yaml"
     camera.save(path)
@@ -171,12 +198,22 @@ def calib_intrinsics(
 
     # report images
     bg = read_frame_at(entry.calib_videos[0], r.views[len(r.views) // 2].t).image
+    if fmaps[0] is not None:
+        bg = fmaps[0].apply(bg)
     cv2.imwrite(str(out / f"{cam}_coverage.jpg"), coverage_image(bg, r.views, r.rejected))
     per_view_plot(results, out / f"{cam}_per_view_rms.png")
-    cv2.imwrite(str(out / f"{cam}_undistort.jpg"), undistort_check(camera, bg))
+    scene_img = read_frame_at(scene, 5.0).image if scene else bg
+    cv2.imwrite(str(out / f"{cam}_undistort.jpg"), undistort_check(camera, scene_img))
     typer.echo(f"report images in {out}: {cam}_coverage.jpg, {cam}_per_view_rms.png, {cam}_undistort.jpg")
     if r.rms > 1.0:
         typer.secho("RMS > 1px: check board.yaml sizes, blur, and the coverage image.", fg="yellow")
+    typer.echo(f"board reached {val['covered_r']:.0f}px from the image centre; image corners are at "
+               f"{val['corner_r']:.0f}px ({100 * val['covered_frac']:.0f}%); model valid up to {val['monotonic_r']:.0f}px")
+    if val["usable"]:
+        typer.secho("calibration covers the image: USABLE", fg="green", bold=True)
+    else:
+        typer.secho("NOT USABLE outside the centre: record board views near the image edges and corners "
+                    "(see the coverage image), then run again with --redetect", fg="red", bold=True)
 
 
 @app.command("calib-check")
