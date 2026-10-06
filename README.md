@@ -68,6 +68,8 @@ Edit [configs/session.yaml](configs/session.yaml) to point at your files and
    - `cam1_coverage.jpg` – where board corners were seen. Red-outlined cells had no corners: distortion there is guessed. For fisheye lenses the borders matter most.
    - `cam1_per_view_rms.png` – per-view error; spikes are blurry or mis-detected frames.
    - `cam1_undistort.jpg` – original vs. undistorted; straight lines must come out straight.
+   - `cam1_work_area.jpg` – where people move in the mopping video (heatmap) vs. the board-covered area (white).
+     The run ends with **USABLE** when ≥95% of that motion lies inside the board coverage.
 
    Fits both a fisheye and a pinhole-rational model and keeps fisheye unless pinhole is clearly better (`--model fisheye` to force).
 
