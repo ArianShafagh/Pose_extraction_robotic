@@ -3,7 +3,7 @@ name = "moppose"
 version = "0.1.0"
 description = "Multi-camera (fisheye) 3D pose extraction of a person mopping"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "opencv-contrib-python>=4.10,<5",
     "numpy>=1.26,<2.3",
@@ -15,8 +15,30 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-yolo = ["ultralytics>=8.3"]
-rtm = ["rtmlib>=0.0.13", "onnxruntime-gpu>=1.18"]
+# Person detection/tracking (YOLO26) + RTMW whole-body pose (ONNX).
+pose = [
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "ultralytics>=8.3.200",
+    "rtmlib>=0.0.13",
+    "onnxruntime-gpu>=1.21,<1.24",  # CUDA 12 builds (match the cu128 PyTorch)
+    "lap>=0.5",  # BoT-SORT tracker dependency (ultralytics would auto-install it)
+]
+# Sapiens2 pose (code is cloned to third_party/sapiens2 by scripts/setup_pose.ps1;
+# these are its runtime dependencies).
+sapiens = [
+    "moppose[pose]",
+    "safetensors>=0.4",
+    "transformers>=4.50",
+    "timm>=1.0",
+    "accelerate>=1.0",
+    "iopath",
+    "prettytable",
+    "termcolor",
+    "rich",
+    "pillow",
+    "huggingface_hub>=0.30",
+]
 viz = ["rerun-sdk>=0.20"]
 
 [project.scripts]
@@ -24,6 +46,21 @@ moppose = "moppose.cli:app"
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+# CUDA 12.8 PyTorch wheels (support RTX 20xx (sm_75) up to RTX 50xx).
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+# rtmlib/ultralytics depend on the CPU-only "onnxruntime", which would overwrite
+# onnxruntime-gpu (same module name). Never install it.
+override-dependencies = ["onnxruntime; sys_platform == 'never'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 [build-system]
 requires = ["hatchling"]

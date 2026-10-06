@@ -49,6 +49,8 @@ class SessionConfig:
     output_dir: Path
     cameras: dict[str, CameraEntry]
     calibration: CalibSettings
+    name: str = "session1"
+    intrinsics_dir: Path | None = None  # where camX_intrinsics.yaml are read from (default: calib output)
 
     @classmethod
     def load(cls, path: str | Path) -> "SessionConfig":
@@ -71,12 +73,24 @@ class SessionConfig:
             output_dir=root / raw.get("output_dir", "outputs"),
             cameras=cams,
             calibration=CalibSettings(**(raw.get("calibration") or {})),
+            name=raw.get("name", "session1"),
+            intrinsics_dir=root / raw["intrinsics_dir"] if raw.get("intrinsics_dir") else None,
         )
 
     def camera(self, name: str) -> CameraEntry:
         if name not in self.cameras:
             raise KeyError(f"camera '{name}' not in session config (have: {list(self.cameras)})")
         return self.cameras[name]
+
+    @property
+    def session_dir(self) -> Path:
+        d = self.output_dir / self.name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def intrinsics_path(self, cam: str) -> Path:
+        d = self.intrinsics_dir or self.calib_dir
+        return d / f"{cam}_intrinsics.yaml"
 
     @property
     def calib_dir(self) -> Path:

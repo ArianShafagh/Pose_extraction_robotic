@@ -18,20 +18,34 @@ mopping videos     ──► time sync ─► 2D pose per camera ─────
 | ChArUco board check / dictionary guess | done |
 | Per-camera intrinsics (fisheye + pinhole-rational, view selection, outlier rejection, report) | done |
 | Multi-view triangulation (weighted DLT, outlier camera rejection) | done |
+| People tracking (YOLO26 + BoT-SORT) and automatic mopper selection | done |
+| 2D pose on fisheye-rectified person crops: Sapiens2 (308 kpts) + RTMW-x (133 kpts) → 23 body+feet joints | done |
 | Extrinsics from a shared reference object | next |
 | Software time sync of the 3 recordings | next |
-| 2D pose: YOLO26-pose / RTMPose backends | next |
-| Smoothing, 3D export, visualisation | next |
+| Smoothing, 3D export, joint angles | next |
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is used.
+Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is used.
 
 ```bash
-uv sync
+uv sync --all-extras          # PyTorch CUDA 12.8, ultralytics, rtmlib, onnxruntime-gpu, Sapiens2 deps
+uv run moppose setup          # Sapiens2 code + weights, RTMW, YOLO26; GPU check
 ```
 
-Pose backends (later) are optional extras: `uv sync --extra yolo` or `uv sync --extra rtm`.
+Heavy pose runs on another computer: see [docs/REMOTE_GPU.md](docs/REMOTE_GPU.md).
+
+## 2D pose
+```bash
+uv run moppose people --cam cam1          # track people, pick the mopper -> outputs/session1/people/cam1_tracks.jpg
+uv run moppose pose2d --cam cam1 --end 20 # 2D keypoints with RTMW + Sapiens2 (first 20 s)
+uv run moppose pose-preview --cam cam1    # skeleton grid outputs/session1/pose2d/cam1_preview.jpg
+uv run moppose pose-all                   # all of the above for every camera
+```
+Each person is cut out with a *virtual pinhole camera* aimed at them through the fisheye
+calibration (`pose2d/virtual_cam.py`), so the models see an undistorted, upright person; keypoints are
+mapped back to raw fisheye pixels. Results per camera and model: `outputs/session1/pose2d/<model>/<video>.npz`
+with `t`, `kpts (T, 23, 2)`, `conf (T, 23)` (body + feet, raw pixels) plus every native keypoint.
 
 ## Data layout
 

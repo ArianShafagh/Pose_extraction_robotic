@@ -261,5 +261,189 @@ def calib_check(
     typer.echo(f"wrote {p}")
 
 
+# ---------------------------------------------------------------------------
+# 2D pose stage
+# ---------------------------------------------------------------------------
+def _cams(ses: SessionConfig, cam: str) -> list[str]:
+    return list(ses.cameras) if cam == "all" else [c.strip() for c in cam.split(",")]
+
+
+@app.command()
+def people(
+    cam: str = typer.Option("all", "--cam", "-c", help="camera name, comma list, or all"),
+    session: Path = SESSION,
+    model: str = typer.Option("yolo26x.pt", help="ultralytics detection model"),
+    track: int = typer.Option(None, help="force this track id as the mopper (see the preview image)"),
+    start: float = typer.Option(0.0, help="start time (s)"),
+    end: float = typer.Option(None, help="end time (s)"),
+    redo: bool = typer.Option(False, help="re-run tracking even if results exist"),
+):
+    """Detect + track people, pick the mopper; writes outputs/<session>/people/ with a preview image."""
+    from moppose.io.video import read_frame_at
+    from moppose.pose2d.people import Tracks, track_people
+    from moppose.pose2d.select import preview, select_mopper, summarize
+
+    ses = SessionConfig.load(session)
+    out = ses.session_dir / "people"
+    for c in _cams(ses, cam):
+        video = ses.camera(c).videos[0]
+        path = out / f"{c}.npz"
+        if path.exists() and not redo:
+            tr = Tracks.load(path)
+            typer.echo(f"{c}: loaded tracks from {path}")
+        else:
+            tr = track_people(video, model=model, start_s=start, end_s=end)
+            tr.save(path)
+        chain = select_mopper(tr, seed_id=track)
+        s = summarize(tr)
+        typer.echo(f"{c}: {len(s)} tracks; mopper = {chain} "
+                   f"(covers {sum(s[i].n for i in chain)} of {len(tr.frame_t)} frames)")
+        (out / f"{c}_mopper.json").write_text(json.dumps({"chain": chain, "seed": track}))
+        bg = read_frame_at(video, float(tr.frame_t[len(tr.frame_t) // 2])).image
+        img_path = out / f"{c}_tracks.jpg"
+        cv2.imwrite(str(img_path), preview(bg, tr, chain))
+        typer.echo(f"   check {img_path}: the green path must be the mopper, else rerun with --track ID")
+
+
+@app.command()
+def pose2d(
+    cam: str = typer.Option("all", "--cam", "-c", help="camera name, comma list, or all"),
+    session: Path = SESSION,
+    backend: str = typer.Option("rtmw,sapiens2", help="comma list: rtmw, sapiens2"),
+    start: float = typer.Option(0.0, help="start time (s)"),
+    end: float = typer.Option(None, help="end time (s)"),
+    every: int = typer.Option(1, help="use every N-th mopper frame (1 = all)"),
+    sapiens_size: str = typer.Option("0.8b", help="Sapiens2 model: 0.4b | 0.8b | 1b | 5b"),
+    flip_test: bool = typer.Option(True, help="Sapiens2 flip test (more accurate, 2x slower)"),
+    batch: int = typer.Option(4, help="crops per model call (lower it if GPU memory runs out)"),
+):
+    """2D body+feet keypoints of the mopper with each backend; writes outputs/<session>/pose2d/."""
+    from moppose.calib.camera import Camera
+    from moppose.pose2d.backends import make_backend
+    from moppose.pose2d.people import Tracks
+    from moppose.pose2d.run import run_pose
+    from moppose.pose2d.select import mopper_boxes
+
+    ses = SessionConfig.load(session)
+    backends = [make_backend(b.strip(), size=sapiens_size, flip_test=flip_test) for b in backend.split(",")]
+    for c in _cams(ses, cam):
+        video = ses.camera(c).videos[0]
+        ppl = ses.session_dir / "people"
+        if not (ppl / f"{c}.npz").exists():
+            raise typer.BadParameter(f"run `moppose people --cam {c}` first")
+        tr = Tracks.load(ppl / f"{c}.npz")
+        chain = json.loads((ppl / f"{c}_mopper.json").read_text())["chain"]
+        t, _, boxes = mopper_boxes(tr, chain)
+        keep = (t >= start) & (t <= (end if end is not None else np.inf))
+        t, boxes = t[keep][::every], boxes[keep][::every]
+        cam_model = Camera.load(ses.intrinsics_path(c))
+        typer.echo(f"{c}: {len(t)} frames with the mopper")
+        paths = run_pose(cam_model, video, t, boxes, backends, ses.session_dir / "pose2d", batch=batch)
+        for name, p in paths.items():
+            z = np.load(p)
+            typer.echo(f"   {name}: {p}  ({len(z['t'])} frames, mean conf {np.nanmean(z['conf']):.2f})")
+
+
+@app.command("pose-preview")
+def pose_preview(
+    cam: str = typer.Option("all", "--cam", "-c"),
+    session: Path = SESSION,
+    n: int = typer.Option(12, help="number of sample frames"),
+    video_out: bool = typer.Option(False, "--video", help="also write an mp4 with skeletons"),
+    start: float = typer.Option(0.0),
+    end: float = typer.Option(None),
+):
+    """Grid of zoomed frames with every backend's skeleton (and optionally an overlay video)."""
+    from moppose.io.video import iter_frames, read_frame_at
+    from moppose.viz.pose_overlay import COLORS, draw_skeleton, zoom_on
+
+    ses = SessionConfig.load(session)
+    pdir = ses.session_dir / "pose2d"
+    for c in _cams(ses, cam):
+        video = ses.camera(c).videos[0]
+        res = {b.name: np.load(b / f"{video.stem}.npz") for b in sorted(pdir.iterdir())
+               if b.is_dir() and (b / f"{video.stem}.npz").exists()} if pdir.exists() else {}
+        if not res:
+            typer.echo(f"{c}: no pose results yet")
+            continue
+        ref = next(iter(res.values()))
+        ts = ref["t"][(ref["t"] >= start) & (ref["t"] <= (end if end is not None else np.inf))]
+        tiles = []
+        for t in ts[np.linspace(0, len(ts) - 1, min(n, len(ts))).astype(int)]:
+            img = read_frame_at(video, float(t)).image
+            pts = []
+            for name, z in res.items():
+                i = int(np.argmin(np.abs(z["t"] - t)))
+                if abs(z["t"][i] - t) < 1e-3:
+                    draw_skeleton(img, z["kpts"][i], z["conf"][i], z["edges"], COLORS.get(name, (0, 255, 0)), label=name)
+                    pts.append(z["kpts"][i])
+            tile = zoom_on(img, np.concatenate(pts)) if pts else cv2.resize(img, (480, 480))
+            cv2.putText(tile, f"{t:.2f}s", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            tiles.append(tile)
+        cols = 4
+        while len(tiles) % cols:
+            tiles.append(np.zeros_like(tiles[0]))
+        grid = np.vstack([np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)])
+        p = pdir / f"{c}_preview.jpg"
+        cv2.imwrite(str(p), grid)
+        typer.echo(f"{c}: {p}")
+        if video_out:
+            wr = None
+            vp = pdir / f"{c}_overlay.mp4"
+            for fr in iter_frames(video, start_s=start, end_s=end):
+                img = fr.image
+                for name, z in res.items():
+                    i = int(np.searchsorted(z["t"], fr.t - 1e-4))
+                    if i < len(z["t"]) and abs(z["t"][i] - fr.t) < 1e-3:
+                        draw_skeleton(img, z["kpts"][i], z["conf"][i], z["edges"], COLORS.get(name, (0, 255, 0)), label=name)
+                if wr is None:
+                    wr = cv2.VideoWriter(str(vp), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (img.shape[1], img.shape[0]))
+                wr.write(img)
+            if wr is not None:
+                wr.release()
+                typer.echo(f"{c}: {vp}")
+
+
+@app.command("pose-all")
+def pose_all(
+    session: Path = SESSION,
+    backend: str = typer.Option("rtmw,sapiens2"),
+    sapiens_size: str = typer.Option("0.8b"),
+    end: float = typer.Option(None, help="only the first N seconds (quick test)"),
+):
+    """Everything for all cameras: people tracking -> mopper -> 2D pose -> previews."""
+    people(cam="all", session=session, model="yolo26x.pt", track=None, start=0.0, end=end, redo=False)
+    pose2d(cam="all", session=session, backend=backend, start=0.0, end=end, every=1,
+           sapiens_size=sapiens_size, flip_test=True, batch=4)
+    pose_preview(cam="all", session=session, n=12, video_out=False, start=0.0, end=end)
+
+
+@app.command()
+def setup(
+    sapiens_size: str = typer.Option("0.8b", help="Sapiens2 pose model to download: 0.4b | 0.8b | 1b | 5b"),
+    skip_sapiens: bool = typer.Option(False, help="only RTMW + YOLO"),
+):
+    """One-time download of pose models (Sapiens2 code + weights, RTMW, YOLO26) and a GPU check."""
+    import torch
+
+    from moppose.pose2d.setup_models import setup_rtmw, setup_sapiens2
+
+    typer.echo(f"PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        p = torch.cuda.get_device_properties(0)
+        typer.echo(f"GPU: {p.name}, {p.total_memory / 1e9:.1f} GB")
+    else:
+        typer.secho("No CUDA GPU visible - install/update the NVIDIA driver.", fg="red")
+    if not skip_sapiens:
+        typer.echo(f"Sapiens2 {sapiens_size}: {setup_sapiens2(sapiens_size)}")
+    setup_rtmw()
+    typer.echo("RTMW-x: ready")
+    from ultralytics import YOLO
+
+    YOLO("yolo26x.pt")
+    typer.echo("YOLO26x: ready")
+    typer.secho("setup done", fg="green", bold=True)
+
+
 if __name__ == "__main__":
     app()

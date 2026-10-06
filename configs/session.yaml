@@ -1,6 +1,8 @@
 # Session description: which video belongs to which camera.
 # Paths are relative to the repo root (put footage under data/, which is gitignored).
 output_dir: outputs
+name: session1                         # results go to outputs/<name>/
+intrinsics_dir: calibration/session1   # saved camera calibrations used by the pose stage
 
 cameras:
   cam1:

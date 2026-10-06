@@ -58,6 +58,24 @@ class Camera:
             out = cv2.undistortPointsIter(pts, self.K, self.D, None, None, _ITER_CRITERIA)
         return out.reshape(-1, 2)
 
+    def project_cam(self, X_cam: np.ndarray) -> np.ndarray:
+        """(N, 3) points/rays in this camera's own frame -> (N, 2) distorted pixels."""
+        X = np.asarray(X_cam, np.float64).reshape(-1, 1, 3)
+        if len(X) == 0:
+            return np.zeros((0, 2))
+        zero = np.zeros((3, 1))
+        if self.model == "fisheye":
+            uv, _ = cv2.fisheye.projectPoints(X, zero, zero, self.K, self.D)
+        else:
+            uv, _ = cv2.projectPoints(X, zero, zero, self.K, self.D)
+        return uv.reshape(-1, 2)
+
+    def rays(self, pts: np.ndarray) -> np.ndarray:
+        """(N, 2) distorted pixels -> (N, 3) unit viewing rays in the camera frame."""
+        n = self.undistort_points(pts)
+        r = np.concatenate([n, np.ones((len(n), 1))], axis=1)
+        return r / np.linalg.norm(r, axis=1, keepdims=True)
+
     def project(self, X_world: np.ndarray) -> np.ndarray:
         """(N, 3) world points -> (N, 2) distorted pixels."""
         X = np.asarray(X_world, np.float64).reshape(-1, 1, 3)

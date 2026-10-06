@@ -28,3 +28,6 @@ dist/
 .idea/
 Thumbs.db
 .DS_Store
+
+# third-party code cloned by setup scripts
+third_party/
