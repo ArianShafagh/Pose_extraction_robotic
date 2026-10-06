@@ -437,7 +437,7 @@ def setup(
     if not skip_sapiens:
         typer.echo(f"Sapiens2 {sapiens_size}: {setup_sapiens2(sapiens_size)}")
     setup_rtmw()
-    typer.echo("RTMW-x: ready")
+    typer.echo("RTMW: ready")
     from ultralytics import YOLO
 
     YOLO("yolo26x.pt")

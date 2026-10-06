@@ -19,7 +19,7 @@ mopping videos     ──► time sync ─► 2D pose per camera ─────
 | Per-camera intrinsics (fisheye + pinhole-rational, view selection, outlier rejection, report) | done |
 | Multi-view triangulation (weighted DLT, outlier camera rejection) | done |
 | People tracking (YOLO26 + BoT-SORT) and automatic mopper selection | done |
-| 2D pose on fisheye-rectified person crops: Sapiens2 (308 kpts) + RTMW-x (133 kpts) → 23 body+feet joints | done |
+| 2D pose on fisheye-rectified person crops: Sapiens2 (308 kpts) + RTMW (133 kpts) → 23 body+feet joints | done |
 | Extrinsics from a shared reference object | next |
 | Software time sync of the 3 recordings | next |
 | Smoothing, 3D export, joint angles | next |

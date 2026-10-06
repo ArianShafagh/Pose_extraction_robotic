@@ -29,7 +29,7 @@ def setup_sapiens2(size: str = "0.8b") -> Path:
 
 
 def setup_rtmw() -> None:
-    """Download the RTMW-x ONNX model into rtmlib's cache."""
+    """Download the RTMW ONNX model into rtmlib's cache."""
     from moppose.pose2d.backends import RTMWBackend
 
     RTMWBackend(device="cpu")

@@ -19,8 +19,10 @@ REPO = Path(__file__).resolve().parents[3]
 SAPIENS_ROOT = Path(os.environ.get("SAPIENS_ROOT", REPO / "third_party" / "sapiens2"))
 SAPIENS_CKPT_ROOT = Path(os.environ.get("SAPIENS_CHECKPOINT_ROOT", REPO / "third_party" / "sapiens2_host"))
 
-RTMW_X_URL = ("https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
-              "rtmw-x_simcc-cocktail13_pt-ucoco_270e-384x288-0949e3a9_20230925.zip")
+# RTMW 384x288 trained on the 14-dataset "cocktail14" mix (rtmlib's 'performance' model).
+# Not the cocktail13 RTMW-x release: its foot keypoints are broken (toes land near the head).
+RTMW_URL = ("https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
+            "rtmw-dw-x-l_simcc-cocktail14_270e-384x288_20231122.zip")
 
 
 class PoseBackend:
@@ -31,6 +33,10 @@ class PoseBackend:
     def infer(self, crops: list[np.ndarray], boxes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """crops: list of BGR images; boxes (B, 4). Returns kpts (B, J, 2) crop px, scores (B, J)."""
         raise NotImplementedError
+
+    def normalize_conf(self, scores: np.ndarray) -> np.ndarray:
+        """Map the model's native scores to a 0..1 confidence (identity by default)."""
+        return scores
 
 
 def _prepare_cuda_for_onnxruntime() -> None:
@@ -45,17 +51,23 @@ def _prepare_cuda_for_onnxruntime() -> None:
 
 
 class RTMWBackend(PoseBackend):
-    """RTMW-x whole-body (133 COCO-WholeBody keypoints), ONNX via rtmlib."""
+    """RTMW whole-body (133 COCO-WholeBody keypoints), ONNX via rtmlib."""
 
     name = "rtmw"
 
-    def __init__(self, device: str = "cuda", onnx_model: str = RTMW_X_URL):
+    def __init__(self, device: str = "cuda", onnx_model: str = RTMW_URL):
         _prepare_cuda_for_onnxruntime()
         from rtmlib import RTMPose
 
         self.model = RTMPose(onnx_model=onnx_model, model_input_size=(288, 384), backend="onnxruntime", device=device)
         self.native_names = [f"cwb_{i}" for i in range(133)]
         self.to_body_feet = COCO_WHOLEBODY_TO_BODY_FEET
+
+    def normalize_conf(self, scores):
+        # SimCC scores of this model are unbounded (good joints ~3-8); s/(1+s) keeps the
+        # ordering and maps them into 0..1 (1 -> 0.5, 4 -> 0.8).
+        s = np.clip(scores, 0, None)
+        return s / (1.0 + s)
 
     def infer(self, crops, boxes):
         kp, sc = [], []

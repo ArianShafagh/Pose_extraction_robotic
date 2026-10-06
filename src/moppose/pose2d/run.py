@@ -103,7 +103,7 @@ def merge_parts(out_dir: Path, backend: PoseBackend, video: Path, names: list[st
     path = out_dir / backend.name / f"{video.stem}.npz"
     np.savez_compressed(
         path, t=t, bbox=bb,
-        kpts=kn[:, m], conf=cn[:, m],                       # canonical BODY_FEET (23), raw pixels
+        kpts=kn[:, m], conf=backend.normalize_conf(cn[:, m]),  # canonical BODY_FEET (23), raw px, conf 0..1
         kpts_native=kn, conf_native=cn,                     # everything the model produced
         joint_names=np.array(BODY_FEET), native_names=np.array(backend.native_names), edges=EDGE_IDX,
     )
