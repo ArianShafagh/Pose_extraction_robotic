@@ -102,7 +102,7 @@ Results on the first 20 s of cam1:
 | | Sapiens2-0.8B | RTMW |
 |---|---|---|
 | mean confidence | **0.87** | 0.81 |
-| frame-to-frame jitter | **0.64 px** | 1.03 px |
+| frame-to-frame jitter | **0.64 px** | 0.84 px |
 | speed on RTX 2070 (8 GB) | 0.83 frames/s | ~30 frames/s |
 | agreement between the two | 1–4 px on all 23 joints | |
 

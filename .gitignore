@@ -31,3 +31,6 @@ Thumbs.db
 
 # third-party code cloned by setup scripts
 third_party/
+
+# generated report figures
+docs/report/fig/
