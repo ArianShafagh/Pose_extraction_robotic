@@ -24,7 +24,7 @@ pose = [
     "onnxruntime-gpu>=1.21,<1.24",  # CUDA 12 builds (match the cu128 PyTorch)
     "lap>=0.5",  # BoT-SORT tracker dependency (ultralytics would auto-install it)
 ]
-# Sapiens2 pose (code is cloned to third_party/sapiens2 by scripts/setup_pose.ps1;
+# Sapiens2 pose (code is cloned to third_party/sapiens2 by `moppose setup`;
 # these are its runtime dependencies).
 sapiens = [
     "moppose[pose]",

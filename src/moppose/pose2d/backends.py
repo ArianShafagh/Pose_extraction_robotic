@@ -86,7 +86,7 @@ class Sapiens2Backend(PoseBackend):
     def __init__(self, size: str = "0.8b", device: str = "cuda:0", fp16: bool = True, flip_test: bool = True,
                  checkpoint: Path | None = None):
         if not SAPIENS_ROOT.exists():
-            raise FileNotFoundError(f"Sapiens2 code not found at {SAPIENS_ROOT} - run scripts/setup_pose.ps1")
+            raise FileNotFoundError(f"Sapiens2 code not found at {SAPIENS_ROOT} - run `uv run moppose setup`")
         sys.path.insert(0, str(SAPIENS_ROOT))
         import torch
         from sapiens.pose.datasets import UDPHeatmap, parse_pose_metainfo
@@ -98,7 +98,7 @@ class Sapiens2Backend(PoseBackend):
             f"sapiens2_{size}_keypoints308_shutterstock_goliath_3po-1024x768.py"
         checkpoint = checkpoint or SAPIENS_CKPT_ROOT / "pose" / f"sapiens2_{size}_pose.safetensors"
         if not checkpoint.exists():
-            raise FileNotFoundError(f"Sapiens2 checkpoint missing: {checkpoint} - see scripts/setup_pose.ps1")
+            raise FileNotFoundError(f"Sapiens2 checkpoint missing: {checkpoint} - run `uv run moppose setup`")
         self.model = init_model(str(config), str(checkpoint), device=device)
         self.meta = parse_pose_metainfo(dict(from_file=str(cfg_dir / "_base_" / "keypoints308.py")))
         codec_cfg = dict(self.model.cfg.codec)
