@@ -314,8 +314,10 @@ def pose2d(
     end: float = typer.Option(None, help="end time (s)"),
     every: int = typer.Option(1, help="use every N-th mopper frame (1 = all)"),
     sapiens_size: str = typer.Option("0.8b", help="Sapiens2 model: 0.4b | 0.8b | 1b | 5b"),
-    flip_test: bool = typer.Option(True, help="Sapiens2 flip test (more accurate, 2x slower)"),
-    batch: int = typer.Option(4, help="crops per model call (lower it if GPU memory runs out)"),
+    flip_test: bool = typer.Option(None, "--flip-test/--no-flip-test",
+                                   help="Sapiens2 flip test (2x slower); default: on with fp16, off with fp32"),
+    precision: str = typer.Option("auto", help="Sapiens2: auto (fp16 on RTX 20xx+, fp32 on GTX 10xx) | fp16 | fp32"),
+    batch: int = typer.Option(2, help="crops per model call (lower it if GPU memory runs out)"),
 ):
     """2D body+feet keypoints of the mopper with each backend; writes outputs/<session>/pose2d/."""
     from moppose.calib.camera import Camera
@@ -325,7 +327,8 @@ def pose2d(
     from moppose.pose2d.select import mopper_boxes
 
     ses = SessionConfig.load(session)
-    backends = [make_backend(b.strip(), size=sapiens_size, flip_test=flip_test) for b in backend.split(",")]
+    backends = [make_backend(b.strip(), size=sapiens_size, flip_test=flip_test, precision=precision)
+                for b in backend.split(",")]
     for c in _cams(ses, cam):
         video = ses.camera(c).videos[0]
         ppl = ses.session_dir / "people"
@@ -410,12 +413,16 @@ def pose_all(
     backend: str = typer.Option("rtmw,sapiens2"),
     sapiens_size: str = typer.Option("0.8b"),
     end: float = typer.Option(None, help="only the first N seconds (quick test)"),
+    cam: str = typer.Option("all", "--cam", "-c", help="camera name, comma list, or all"),
+    every: int = typer.Option(1, help="use every N-th mopper frame (2 = 15 fps)"),
+    flip_test: bool = typer.Option(None, "--flip-test/--no-flip-test",
+                                   help="Sapiens2 flip test (2x slower); default: on with fp16, off with fp32"),
 ):
     """Everything for all cameras: people tracking -> mopper -> 2D pose -> previews."""
-    people(cam="all", session=session, model="yolo26x.pt", track=None, start=0.0, end=end, redo=False)
-    pose2d(cam="all", session=session, backend=backend, start=0.0, end=end, every=1,
-           sapiens_size=sapiens_size, flip_test=True, batch=4)
-    pose_preview(cam="all", session=session, n=12, video_out=False, start=0.0, end=end)
+    people(cam=cam, session=session, model="yolo26x.pt", track=None, start=0.0, end=end, redo=False)
+    pose2d(cam=cam, session=session, backend=backend, start=0.0, end=end, every=every,
+           sapiens_size=sapiens_size, flip_test=flip_test, precision="auto", batch=2)
+    pose_preview(cam=cam, session=session, n=12, video_out=False, start=0.0, end=end)
 
 
 @app.command()
@@ -431,7 +438,12 @@ def setup(
     typer.echo(f"PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         p = torch.cuda.get_device_properties(0)
-        typer.echo(f"GPU: {p.name}, {p.total_memory / 1e9:.1f} GB")
+        cc = torch.cuda.get_device_capability(0)
+        typer.echo(f"GPU: {p.name}, {p.total_memory / 1e9:.1f} GB, compute capability {cc[0]}.{cc[1]}")
+        typer.echo("Sapiens2 will run in " + ("fp16 with flip test (tensor cores)" if cc >= (7, 0)
+                                              else "fp32 without flip test (no tensor cores)"))
+        x = torch.randn(256, 256, device="cuda")
+        typer.echo(f"CUDA kernels run on this GPU: {bool(torch.isfinite(x @ x).all())}")
     else:
         typer.secho("No CUDA GPU visible - install/update the NVIDIA driver.", fg="red")
     if not skip_sapiens:

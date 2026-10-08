@@ -25,8 +25,24 @@ RTMW_URL = ("https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
             "rtmw-dw-x-l_simcc-cocktail14_270e-384x288_20231122.zip")
 
 
+def use_fp16(precision: str, device: str) -> bool:
+    """fp16 only pays off on GPUs with tensor cores (compute capability >= 7.0, RTX 20xx and newer).
+
+    Pascal cards such as the GTX 1080 run fp16 math at a small fraction of fp32 speed, so they get fp32.
+    """
+    if precision not in ("auto", "fp16", "fp32"):
+        raise ValueError(f"precision must be auto | fp16 | fp32, not {precision!r}")
+    if precision != "auto" or not device.startswith("cuda"):
+        return precision == "fp16" and device.startswith("cuda")
+    import torch
+
+    idx = int(device.split(":")[1]) if ":" in device else 0
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(idx) >= (7, 0)
+
+
 class PoseBackend:
     name: str
+    config: str = ""  # model settings; results computed with other settings are never reused
     native_names: list[str]
     to_body_feet: np.ndarray  # indices into native keypoints for skeleton.BODY_FEET
 
@@ -62,6 +78,7 @@ class RTMWBackend(PoseBackend):
         self.model = RTMPose(onnx_model=onnx_model, model_input_size=(288, 384), backend="onnxruntime", device=device)
         self.native_names = [f"cwb_{i}" for i in range(133)]
         self.to_body_feet = COCO_WHOLEBODY_TO_BODY_FEET
+        self.config = Path(onnx_model).stem
 
     def normalize_conf(self, scores):
         # SimCC scores of this model are unbounded (good joints ~3-8); s/(1+s) keeps the
@@ -79,11 +96,11 @@ class RTMWBackend(PoseBackend):
 
 
 class Sapiens2Backend(PoseBackend):
-    """Sapiens2 308-keypoint top-down pose (Meta). fp16 on GPU, optional flip test."""
+    """Sapiens2 308-keypoint top-down pose (Meta). fp16 on tensor-core GPUs, fp32 otherwise; optional flip test."""
 
     name = "sapiens2"
 
-    def __init__(self, size: str = "0.8b", device: str = "cuda:0", fp16: bool = True, flip_test: bool = True,
+    def __init__(self, size: str = "0.8b", device: str = "cuda:0", precision: str = "auto", flip_test: bool | None = None,
                  checkpoint: Path | None = None):
         if not SAPIENS_ROOT.exists():
             raise FileNotFoundError(f"Sapiens2 code not found at {SAPIENS_ROOT} - run `uv run moppose setup`")
@@ -104,10 +121,13 @@ class Sapiens2Backend(PoseBackend):
         codec_cfg = dict(self.model.cfg.codec)
         codec_cfg.pop("type")
         self.codec = UDPHeatmap(**codec_cfg)
-        self.fp16 = fp16 and device.startswith("cuda")
+        self.fp16 = use_fp16(precision, device)
         if self.fp16:
             self.model.half()
-        self.flip_test = flip_test
+        # flip test (average with the mirrored image) costs 2x; by default only where fp16 makes it affordable.
+        # Measured: dropping it moves keypoints by ~0.75 crop px (median) - less than using the smaller model.
+        self.flip_test = self.fp16 if flip_test is None else flip_test
+        self.config = f"{size}_{'fp16' if self.fp16 else 'fp32'}_{'flip' if self.flip_test else 'noflip'}"
         id2name = self.meta["keypoint_id2name"]
         self.native_names = [id2name[i] for i in range(len(id2name))]
         self.to_body_feet = index_map(self.native_names)
@@ -145,5 +165,5 @@ def make_backend(name: str, **kw) -> PoseBackend:
     if name == "sapiens2":
         dev = kw.get("device", "cuda")
         return Sapiens2Backend(size=kw.get("size", "0.8b"), device="cuda:0" if dev == "cuda" else dev,
-                               fp16=kw.get("fp16", True), flip_test=kw.get("flip_test", True))
+                               precision=kw.get("precision", "auto"), flip_test=kw.get("flip_test"))
     raise ValueError(f"unknown backend {name!r} (rtmw | sapiens2)")

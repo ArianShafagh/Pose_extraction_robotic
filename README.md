@@ -112,9 +112,21 @@ Problems found and fixed:
 - `onnxruntime` (CPU only) silently replaced `onnxruntime-gpu`. It is now excluded, and the GPU build is pinned to CUDA 12 to match PyTorch.
 
 ### Step 8: Running the heavy model on another computer
-- Sapiens2 takes about 6 h per camera on the laptop's RTX 2070, so the full run happens on a stronger Windows + NVIDIA PC.
-- Everything is installed and downloaded with two commands, and only small result files come back.
-- See **[docs/REMOTE_GPU.md](docs/REMOTE_GPU.md)**.
+- The GPU computer has a **GTX 1080 (8 GB, Pascal)**. Newer PyTorch CUDA 12.8 builds no longer support it, so the
+  project uses the **CUDA 12.6 builds (PyTorch 2.14)**, which run on both the GTX 1080 and the laptop's RTX 2070.
+- The GTX 1080 has no tensor cores, so fp16 is slow on it. Sapiens2 automatically runs in **fp32 without the flip
+  test** there and in fp16 with flip test on RTX cards. Measured on the RTX 2070:
+
+  | Sapiens2 setting | frames/s | GPU memory | change vs best |
+  |---|---|---|---|
+  | 0.8B fp16 + flip (RTX) | 0.86 | 2.3 GB | - |
+  | **0.8B fp32, no flip (GTX 1080)** | 0.48 | 4.2 GB | 0.75 px median |
+  | 0.4B fp32 + flip | 0.45 | 2.6 GB | 1.65 px median |
+
+  Keeping the larger model matters more than the flip test.
+- Result chunks are tagged with the model settings, so runs with different settings never mix.
+- Expected time on the GTX 1080: ~10 h per camera at 30 fps, ~5 h at 15 fps; both computers can run different
+  cameras at the same time. See **[docs/REMOTE_GPU.md](docs/REMOTE_GPU.md)**.
 
 ---
 
@@ -123,7 +135,7 @@ Problems found and fixed:
 ### Setup
 Requires [uv](https://docs.astral.sh/uv/) and Git (Python 3.12 is installed by uv).
 ```bash
-uv sync --all-extras     # PyTorch (CUDA 12.8), ultralytics, rtmlib, onnxruntime-gpu, Sapiens2 dependencies
+uv sync --all-extras     # PyTorch (CUDA 12.6, GTX 10xx..RTX 40xx), ultralytics, rtmlib, onnxruntime-gpu, Sapiens2 dependencies
 uv run moppose setup     # Sapiens2 code + weights, RTMW, YOLO26; prints the GPU
 ```
 

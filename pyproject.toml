@@ -17,11 +17,11 @@ dependencies = [
 [project.optional-dependencies]
 # Person detection/tracking (YOLO26) + RTMW whole-body pose (ONNX).
 pose = [
-    "torch>=2.7",
+    "torch>=2.7,<2.15",  # 2.15 drops the CUDA 12.6 builds (needed for GTX 10xx)
     "torchvision>=0.22",
     "ultralytics>=8.3.200",
     "rtmlib>=0.0.13",
-    "onnxruntime-gpu>=1.21,<1.24",  # CUDA 12 builds (match the cu128 PyTorch)
+    "onnxruntime-gpu>=1.21,<1.24",  # CUDA 12 builds (match the CUDA 12 PyTorch)
     "lap>=0.5",  # BoT-SORT tracker dependency (ultralytics would auto-install it)
 ]
 # Sapiens2 pose (code is cloned to third_party/sapiens2 by `moppose setup`;
@@ -47,10 +47,11 @@ moppose = "moppose.cli:app"
 [dependency-groups]
 dev = ["pytest>=8"]
 
-# CUDA 12.8 PyTorch wheels (support RTX 20xx (sm_75) up to RTX 50xx).
+# CUDA 12.6 PyTorch wheels: support GTX 10xx (Pascal, sm_61) up to RTX 40xx.
+# (The cu128 builds dropped Pascal, i.e. the GTX 1080 of the GPU computer.)
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv]
@@ -59,8 +60,8 @@ explicit = true
 override-dependencies = ["onnxruntime; sys_platform == 'never'"]
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
 
 [build-system]
 requires = ["hatchling"]

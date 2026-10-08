@@ -35,12 +35,12 @@ def run_pose(
     out_dir = Path(out_dir)
     parts = [(i, min(i + chunk, len(t))) for i in range(0, len(t), chunk)]
     names = {a: _part_name(t[a:z]) for a, z in parts}
-    todo = [(a, z) for a, z in parts if not all(_part_path(out_dir, b.name, video, names[a]).exists() for b in backends)]
+    todo = [(a, z) for a, z in parts if not all(_part_path(out_dir, b, video, names[a]).exists() for b in backends)]
     stats = {b.name: 0.0 for b in backends}
     n_done = 0
     for a, z in tqdm(todo, desc=f"pose {video.name}", unit="chunk"):
         want = dict(zip(np.round(t[a:z], 4), range(a, z)))
-        pending = [b for b in backends if not _part_path(out_dir, b.name, video, names[a]).exists()]
+        pending = [b for b in backends if not _part_path(out_dir, b, video, names[a]).exists()]
         res = {b.name: ([], [], []) for b in pending}  # index, raw kpts, scores
         buf_idx, buf_views, buf_crops = [], [], []
 
@@ -69,7 +69,7 @@ def run_pose(
         for b in pending:
             idx, kp, sc = res[b.name]
             nj = len(b.native_names)
-            p = _part_path(out_dir, b.name, video, names[a])
+            p = _part_path(out_dir, b, video, names[a])
             p.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(
                 p, t=t[idx], bbox=boxes[idx],
@@ -89,12 +89,12 @@ def _part_name(t: np.ndarray) -> str:
     return f"part_{t[0]:010.3f}_{len(t):05d}_{digest:08x}"
 
 
-def _part_path(out_dir: Path, backend: str, video: Path, name: str) -> Path:
-    return out_dir / backend / video.stem / f"{name}.npz"
+def _part_path(out_dir: Path, backend: PoseBackend, video: Path, name: str) -> Path:
+    return out_dir / backend.name / video.stem / (backend.config or "default") / f"{name}.npz"
 
 
 def merge_parts(out_dir: Path, backend: PoseBackend, video: Path, names: list[str]) -> Path:
-    zs = [np.load(_part_path(out_dir, backend.name, video, n)) for n in names]
+    zs = [np.load(_part_path(out_dir, backend, video, n)) for n in names]
     t = np.concatenate([z["t"] for z in zs])
     kn = np.concatenate([z["kpts_native"] for z in zs])
     cn = np.concatenate([z["conf_native"] for z in zs])
@@ -106,5 +106,6 @@ def merge_parts(out_dir: Path, backend: PoseBackend, video: Path, names: list[st
         kpts=kn[:, m], conf=backend.normalize_conf(cn[:, m]),  # canonical BODY_FEET (23), raw px, conf 0..1
         kpts_native=kn, conf_native=cn,                     # everything the model produced
         joint_names=np.array(BODY_FEET), native_names=np.array(backend.native_names), edges=EDGE_IDX,
+        config=np.array(backend.config),
     )
     return path
