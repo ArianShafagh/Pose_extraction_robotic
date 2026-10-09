@@ -34,3 +34,6 @@ third_party/
 
 # generated report figures
 docs/report/fig/
+
+# code bundles for moving the repo to another computer
+*.bundle
