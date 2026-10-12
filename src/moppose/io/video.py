@@ -72,12 +72,17 @@ def iter_frames(
     """Yield frames with timestamps. `every_s` > 0 subsamples by time (not index).
 
     Uses grab() for skipped frames so only kept frames are fully retrieved.
+    Seeking (start_s > 0) lands on an earlier keyframe in many files; frames before
+    start_s are skipped by their real timestamp. After a seek the frame index is not
+    known reliably and is reported as -1 - use the timestamp `t` to identify frames.
     """
     cap = open_video(path)
     try:
         if start_s > 0:
             cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000.0)
-        idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            idx = -1
+        else:
+            idx = 0
         next_t = start_s
         while True:
             if not cap.grab():
@@ -90,20 +95,44 @@ def iter_frames(
                 if ok:
                     yield Frame(idx, t, img)
                 next_t = t + every_s if every_s > 0 else t
-            idx += 1
+            if idx >= 0:
+                idx += 1
     finally:
         cap.release()
 
 
-def read_frame_at(path: str | Path, t_s: float) -> Frame:
+def read_frame_at(path: str | Path, t_s: float, tol_s: float = 0.025) -> Frame:
+    """The frame whose real timestamp is closest to t_s.
+
+    OpenCV's seek (CAP_PROP_POS_MSEC) often lands on an earlier keyframe - up to ~1 s
+    early in the security-camera .mkv files - so we seek a little before t_s and then
+    decode forward to the exact frame. Raises if no frame lies within tol_s of t_s
+    (unless the request is past the end, then the last frame is returned).
+    """
     cap = open_video(path)
     try:
-        cap.set(cv2.CAP_PROP_POS_MSEC, t_s * 1000.0)
-        idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        ok, img = cap.read()
-        if not ok:
-            raise IOError(f"could not read frame at {t_s:.2f}s from {path}")
-        return Frame(idx, cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0, img)
+        for back in (2.0, 10.0, None):  # retry from further back if the seek overshot
+            if back is None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            else:
+                cap.set(cv2.CAP_PROP_POS_MSEC, max(t_s - back, 0.0) * 1000.0)
+            best = None
+            first_t = None
+            while cap.grab():
+                t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                first_t = t if first_t is None else first_t
+                if best is None or abs(t - t_s) < abs(best[0] - t_s):
+                    ok, img = cap.retrieve()
+                    if ok:
+                        best = (t, img)
+                if t > t_s + tol_s:
+                    break
+            if first_t is not None and first_t > t_s + tol_s and back is not None:
+                continue  # seek landed after the target: go further back
+            if best is not None and (abs(best[0] - t_s) <= tol_s or t_s > best[0]):
+                return Frame(-1, best[0], best[1])
+            break
+        raise IOError(f"no frame near {t_s:.3f}s in {path}")
     finally:
         cap.release()
 
