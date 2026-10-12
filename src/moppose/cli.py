@@ -264,6 +264,17 @@ def calib_check(
 # ---------------------------------------------------------------------------
 # 2D pose stage
 # ---------------------------------------------------------------------------
+def _video_duration(video: Path) -> float:
+    from moppose.io.video import open_video
+
+    cap = open_video(video)
+    n, fps = cap.get(cv2.CAP_PROP_FRAME_COUNT), cap.get(cv2.CAP_PROP_FPS) or 25.0
+    cap.release()
+    # the header frame rate of these recordings is wrong (15 vs real 30 fps) but frames/fps
+    # still gives the right duration, because the frame count is wrong by the same factor
+    return n / fps
+
+
 def _cams(ses: SessionConfig, cam: str) -> list[str]:
     return list(ses.cameras) if cam == "all" else [c.strip() for c in cam.split(",")]
 
@@ -288,10 +299,16 @@ def people(
     for c in _cams(ses, cam):
         video = ses.camera(c).videos[0]
         path = out / f"{c}.npz"
-        if path.exists() and not redo:
-            tr = Tracks.load(path)
-            typer.echo(f"{c}: loaded tracks from {path}")
-        else:
+        tr = Tracks.load(path) if path.exists() and not redo else None
+        if tr is not None:
+            # saved tracking must cover the requested range (e.g. a 30 s test run is not the full video)
+            want_end = end if end is not None else _video_duration(video)
+            if len(tr.frame_t) == 0 or tr.frame_t.min() > start + 0.5 or tr.frame_t.max() < want_end - 1.0:
+                typer.echo(f"{c}: saved tracks cover {tr.frame_t.min():.0f}-{tr.frame_t.max():.0f} s only - tracking again")
+                tr = None
+            else:
+                typer.echo(f"{c}: loaded tracks from {path}")
+        if tr is None:
             tr = track_people(video, model=model, start_s=start, end_s=end)
             tr.save(path)
         chain = select_mopper(tr, seed_id=track)
