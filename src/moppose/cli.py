@@ -474,5 +474,121 @@ def setup(
     typer.secho("setup done", fg="green", bold=True)
 
 
+# ---------------------------------------------------------------------------
+# 3D stage
+# ---------------------------------------------------------------------------
+@app.command()
+def recon3d(
+    session: Path = SESSION,
+    video: bool = typer.Option(False, "--video", help="also render a 3D skeleton video"),
+    video_start: float = typer.Option(60.0, help="start of the 3D video (s)"),
+    video_len: float = typer.Option(20.0, help="length of the 3D video (s)"),
+):
+    """Sync the cameras, calibrate their poses from the person, triangulate, scale and smooth the 3D landmarks.
+
+    Writes outputs/<session>/3d/: rig.yaml (cameras in metres, time offsets), landmarks3d.npz/.csv,
+    report.json and check images.
+    """
+    import yaml
+
+    from moppose.calib.camera import Camera, save_rig
+    from moppose.multiview.data import load_tracks, on_common_clock
+    from moppose.multiview.pipeline import (bone_lengths, calibrate_extrinsics, clean_and_smooth, reconstruct,
+                                            reject_bone_outliers)
+    from moppose.multiview.world import fit_floor, mop_scale
+    from moppose.viz.skeleton3d import bone_plot, overview, render_video, reprojection_grid
+
+    ses = SessionConfig.load(session)
+    rc = ses.raw.get("reconstruction") or {}
+    names = list(ses.cameras)
+    videos = {c: ses.camera(c).videos[0] for c in names}
+    out = ses.session_dir / "3d"
+    out.mkdir(parents=True, exist_ok=True)
+    backend = rc.get("pose_backend", "sapiens2")
+    tracks = load_tracks(ses.session_dir / "pose2d" / backend, videos)
+    intr = [Camera.load(ses.intrinsics_path(c)) for c in names]
+    jn = tracks[names[0]].joint_names
+    edges = tracks[names[0]].edges
+
+    typer.secho("1/5 time sync + camera poses from the person's joints", bold=True)
+    ex = calibrate_extrinsics(tracks, intr, log=typer.echo)
+
+    typer.secho("2/5 triangulation of every frame", bold=True)
+    ref = tracks[names[0]]
+    times = ref.t[(ref.t >= ref.t[0] + 1) & (ref.t <= ref.t[-1] - 1)]
+    X, err, views, rstats = reconstruct(tracks, ex.cams, ex.offsets, times, min_conf=rc.get("min_conf", 0.5),
+                                        max_reproj_px=rc.get("max_reproj_px", 15))
+    typer.echo(f"  left/right swaps fixed per camera: {rstats.get('left_right_swaps')}")
+
+    typer.secho("3/5 floor + metric scale", bold=True)
+    wt, fstats = fit_floor(X, jn, ex.cams)
+    sc = ses.raw.get("scale") or {}
+    scale_info = {"method": "none"}
+    if sc.get("method") == "mop":
+        i = int(np.argmin(np.abs(times - sc["time_s"])))
+        w = [X[i, jn.index(n)] for n in ("left_wrist", "right_wrist")]
+        top = max(w, key=lambda p: wt.points(p)[2])
+        wt.scale, scale_info = mop_scale(ex.cams, names, sc["joint_px"], top, sc["length_m"], sc.get("hand_offset_m", 0.07))
+        scale_info = {"method": "mop", "metres_per_unit": wt.scale, "length_m": sc["length_m"]} | scale_info
+        typer.echo(f"  scale from the mop: {wt.scale:.3f} m per unit (mop {sc['length_m']} m)")
+    elif sc.get("method") == "factor":
+        wt.scale = float(sc["metres_per_unit"])
+        scale_info = {"method": "factor", "metres_per_unit": wt.scale}
+    else:
+        typer.secho("  no scale in session.yaml: results are in arbitrary units", fg="yellow")
+    cams_w = [wt.camera(c) for c in ex.cams]
+    Xw, dropped = reject_bone_outliers(wt.points(X), jn, tol=rc.get("bone_tolerance", 0.25))
+    typer.echo(f"  joints dropped for implausible bone length: {dropped}")
+
+    typer.secho("4/5 gap filling + smoothing", bold=True)
+    Xs, filled = clean_and_smooth(Xw, times, max_gap_s=rc.get("max_gap_s", 0.5), cutoff_hz=rc.get("smooth_cutoff_hz", 4.0))
+    bl = bone_lengths(Xs, edges)
+    med = np.nanmedian(bl, axis=0)
+    cv = np.nanstd(bl, axis=0) / med
+
+    typer.secho("5/5 export + checks", bold=True)
+    save_rig(cams_w, out / "rig.yaml")
+    with open(out / "rig.yaml", "a", encoding="utf-8") as f:
+        yaml.safe_dump({"time_offsets_s": {k: float(v) for k, v in ex.offsets.items()},
+                        "time_offset_meaning": "video time of a camera = reference (first camera) time + offset",
+                        "world": "metres, z up, floor at z = 0, x from the first camera towards the second",
+                        "scale": scale_info}, f, sort_keys=False)
+    np.savez_compressed(out / "landmarks3d.npz", t=times, xyz=Xs.astype(np.float32), xyz_raw=Xw.astype(np.float32),
+                        filled=filled, views=views.astype(np.int8), reproj_err=err.astype(np.float32),
+                        joint_names=np.array(jn), edges=edges, cameras=np.array(names))
+    header = "t," + ",".join(f"{n}_{a}" for n in jn for a in "xyz")
+    np.savetxt(out / "landmarks3d.csv", np.c_[times, Xs.reshape(len(times), -1)], delimiter=",", header=header,
+               comments="", fmt="%.4f")
+    report = {
+        "frames": int(len(times)), "duration_s": float(times[-1] - times[0]),
+        "valid_joint_samples": float(np.isfinite(Xw[..., 0]).mean()),
+        "mean_views_per_joint": float(views.mean()),
+        "reprojection_px": {c: {"median": float(np.nanmedian(err[k])), "p90": float(np.nanpercentile(err[k], 90))}
+                            for k, c in enumerate(names)},
+        "extrinsics": ex.info, "floor": fstats, "scale": scale_info, "reconstruction": rstats,
+        "bone_outliers_dropped": dropped,
+        "bone_length_cm": {f"{jn[a]}-{jn[b]}": {"median": float(med[i] * 100), "cv_percent": float(cv[i] * 100)}
+                           for i, (a, b) in enumerate(edges)},
+    }
+    (out / "report.json").write_text(json.dumps(report, indent=1))
+    overview(Xs, times, edges, jn, cams_w, out / "overview.png")
+    bone_plot(bl, times, edges, jn, out / "bone_lengths.png")
+    uv, _ = on_common_clock(tracks, ex.offsets, times)
+    sample_t = list(np.linspace(times[0] + 20, times[-1] - 20, 4))
+    reprojection_grid(cams_w, videos, ex.offsets, Xs, times, edges, uv, sample_t, out / "reprojection.jpg")
+    if video:
+        render_video(Xs, times, edges, jn, out / "skeleton3d.mp4", video_start, video_start + video_len)
+
+    typer.echo("")
+    for k, c in enumerate(names):
+        typer.echo(f"  {c}: reprojection median {np.nanmedian(err[k]):.2f} px, 90% < {np.nanpercentile(err[k], 90):.2f} px")
+    legs = [i for i, (a, b) in enumerate(edges) if {jn[a], jn[b]} in ({"left_hip", "left_knee"}, {"right_hip", "right_knee"},
+                                                                       {"left_knee", "left_ankle"}, {"right_knee", "right_ankle"})]
+    typer.echo(f"  joints reconstructed: {np.isfinite(Xw[..., 0]).mean() * 100:.1f}%  | leg bone length variation "
+               f"{np.mean(cv[legs]) * 100:.1f}%")
+    typer.secho(f"results in {out}", fg="green", bold=True)
+
+
+
 if __name__ == "__main__":
     app()

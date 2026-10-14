@@ -51,6 +51,7 @@ class SessionConfig:
     calibration: CalibSettings
     name: str = "session1"
     intrinsics_dir: Path | None = None  # where camX_intrinsics.yaml are read from (default: calib output)
+    raw: dict = field(default_factory=dict)  # the whole YAML (sections such as scale / reconstruction)
 
     @classmethod
     def load(cls, path: str | Path) -> "SessionConfig":
@@ -75,6 +76,7 @@ class SessionConfig:
             calibration=CalibSettings(**(raw.get("calibration") or {})),
             name=raw.get("name", "session1"),
             intrinsics_dir=root / raw["intrinsics_dir"] if raw.get("intrinsics_dir") else None,
+            raw=raw,
         )
 
     def camera(self, name: str) -> CameraEntry:

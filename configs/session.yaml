@@ -26,3 +26,23 @@ calibration:
   min_sharpness: 40.0       # variance of Laplacian; lower = blurrier frames are dropped
   max_views: 80             # frames used in the optimisation (small board -> use many)
   outlier_rms_px: 2.0       # drop views whose own reprojection RMS exceeds this (iteratively)
+
+# Metric scale for the 3D reconstruction (the self-calibration alone has no units).
+# Mop: handle from the joint on the mop pad to its end in the upper hand (~140 +- 10 cm).
+# The joint was marked by hand in two cameras at a moment the person stood still.
+scale:
+  method: mop
+  length_m: 1.40
+  hand_offset_m: 0.07          # handle end sticks out ~7 cm beyond the wrist
+  time_s: 436.484              # reference (cam1) video time of the marked frames
+  joint_px:                    # raw pixels where the handle meets the mop pad
+    cam3: [653.0, 467.0]
+    cam4: [694.6, 575.5]
+
+reconstruction:
+  pose_backend: sapiens2       # which 2D results to triangulate
+  min_conf: 0.5                # ignore 2D joints below this confidence
+  max_reproj_px: 15            # reject a joint if its reprojection error is larger
+  smooth_cutoff_hz: 4.0        # low-pass filter of the 3D trajectories
+  max_gap_s: 0.5               # fill gaps up to this length
+  bone_tolerance: 0.25         # drop a wrist/elbow/knee/ankle sample if its bone is >25% off its median length
