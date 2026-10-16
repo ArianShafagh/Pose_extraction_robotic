@@ -50,3 +50,36 @@ def coarse_offset(ref: Track2D, other: Track2D, max_lag: float = 3.0, step: floa
     else:
         sub = 0.0
     return float(lags[i] + sub * step), float(corr[i])
+
+
+def relative_pose(cam_a, cam_b) -> tuple[np.ndarray, np.ndarray]:
+    """R, t with x_b = R x_a + t from two cameras posed in the same world frame."""
+    R = cam_b.R @ cam_a.R.T
+    return R, cam_b.t - R @ cam_a.t
+
+
+def refine_offset(ref: Track2D, other: Track2D, cam_ref, cam_other, R: np.ndarray, t: np.ndarray,
+                  times: np.ndarray, d0: float, min_conf: float = 0.6,
+                  steps=((0.15, 0.01), (0.012, 0.002))) -> tuple[float, float]:
+    """Offset d (other's time = ref time + d) minimising the median epipolar error of all joints.
+
+    R, t: relative pose (x_other = R x_ref + t), e.g. from relative_pose() of a calibrated rig.
+    Returns (d, median epipolar error in pixels).
+    """
+    from moppose.multiview.selfcalib import normalized, sampson
+
+    f = float(np.mean([cam_ref.K[0, 0], cam_other.K[0, 0]]))
+    ka, ca = ref.sample(times)
+    xa = normalized([cam_ref], ka[None])[0]
+    best = (np.inf, float(d0))
+    for span, step in steps:
+        for d in np.arange(best[1] - span, best[1] + span + 1e-9, step):
+            kb, cb = other.sample(times + d)
+            xb = normalized([cam_other], kb[None])[0]
+            ok = (ca >= min_conf) & (cb >= min_conf) & np.all(np.isfinite(xa), -1) & np.all(np.isfinite(xb), -1)
+            if ok.sum() < 50:
+                continue
+            e = float(np.median(sampson(xa[ok], xb[ok], R, t)) * f)
+            if e < best[0]:
+                best = (e, float(d))
+    return best[1], best[0]

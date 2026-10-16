@@ -37,3 +37,6 @@ docs/report/fig/
 
 # code bundles for moving the repo to another computer
 *.bundle
+
+# final outputs of `moppose run` (per recording)
+results/

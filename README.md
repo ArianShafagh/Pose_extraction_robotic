@@ -5,12 +5,20 @@ The 3D body landmarks produced here will later drive a robot that shadows the mo
 The robot side is a separate project; this repo stops at clean 3D landmarks and joint angles.
 
 ```
-board videos   ──► 1. lens calibration per camera (ChArUco)          ✅ done
-mopping videos ──► 2. find the mopper ─► 3. 2D pose per camera       ✅ done (runs on a GPU PC)
-reference obj. ──► 4. camera positions in one 3D world               ⏳ next
-                   5. time sync of the 3 recordings                   ⏳ next
-                   6. triangulation ─► smoothing ─► 3D landmarks      ⏳ (triangulation code ready)
-                   7. skeleton fit ─► joint angles for the robot      ⏳ later
+board videos   ──► 1. lens calibration per camera (ChArUco)                    ✅ done
+any recording  ──► 2. find the actor ─► 3. 2D pose per camera                  ✅ done (GPU PC)
+                   4. camera rig in metres (self-calibrated from the person)    ✅ done, reused
+                   5. time sync of the 3 recordings                             ✅ automatic
+                   6. triangulation ─► cleaning ─► smoothing ─► 3D landmarks    ✅ done
+                   7. full-length 3D skeleton video + report                    ✅ done
+                   8. skeleton fit ─► joint angles for the robot                ⏳ next
+```
+
+**Process a new recording** (same cameras, any action): copy `configs/recordings/_template.yaml`, set the
+name and the 3 videos, then run one command; everything from the videos to the named outputs and the
+full-length 3D video happens automatically. See **[docs/AUTOMATION.md](docs/AUTOMATION.md)**.
+```bash
+uv run moppose run configs/recordings/<your recording>.yaml
 ```
 
 ---
@@ -128,6 +136,35 @@ Problems found and fixed:
 - Expected time on the GTX 1080: ~10 h per camera at 30 fps, ~5 h at 15 fps; both computers can run different
   cameras at the same time. See **[docs/REMOTE_GPU.md](docs/REMOTE_GPU.md)**.
 
+### Step 9: Time sync, camera positions and 3D landmarks
+- **No calibration object was needed.** The mopper's own 23 joints, seen by all 3 cameras at the same
+  moments, give about 190,000 correspondences per camera pair.
+- **Time sync:** the timing of her movements gives the offset between the separately recorded videos.
+  It is then refined on the epipolar error: **cam3 −247 ms, cam4 +157 ms** relative to cam1, stable over
+  10 minutes.
+- **Camera poses:** essential matrices → chained translation scales → sparse bundle adjustment with a
+  vectorised fisheye projection. The median reprojection error is **1.4 px**.
+- **Floor:** 95% of all heel/toe points lie on one plane; z points up from it.
+- **Metric scale:** from the mop handle (140 ± 10 cm). The mop's floor joint triangulates 0.6 cm from the
+  floor, which is a consistency check. Cameras come out 2.7–3.0 m high and cam1–cam3 12.2 m apart.
+- **Triangulation of all ~8,900 frames:**
+  - 99.3% of joint samples reconstructed;
+  - reprojection 1.6 / 1.8 / 1.6 px;
+  - leg and torso bone lengths constant within 2–3%;
+  - the right forearm is the weakest (the hand holding the top of the mop is often hidden).
+- **Cleaning:** a left/right swap check per camera, a bone-length outlier check, gap filling up to 0.5 s,
+  and a 4 Hz zero-phase low-pass filter.
+
+### Step 10: Automation for any recording
+- The calibrated rig is saved in `calibration/rig/rig.yaml` and reused (the cameras are fixed), so a new
+  recording only needs its own time sync.
+- One config per recording (`configs/recordings/*.yaml`) plus the shared `configs/setup.yaml`; every output
+  file name is set in the config.
+- `moppose run` runs 8 resumable stages. A changed config section reruns only what depends on it.
+- **The actor is found automatically:** the person whose positions in the 3 cameras agree in 3D with the
+  rig. On session1: feet consistent within 7.6 px, against 40 px for the next-best combination.
+- **A full-length 3D skeleton video** is rendered with OpenCV in about 11 ms per frame.
+
 ---
 
 ## How to use it
@@ -159,6 +196,9 @@ Files are listed in [configs/session.yaml](configs/session.yaml); the board is i
 | `moppose pose2d --cam cam1` | 2D pose with Sapiens2 + RTMW (`--end 20` for a test) | `outputs/session1/pose2d/` |
 | `moppose pose-preview --cam cam1` | skeleton grid (`--video` for an overlay mp4) | `outputs/session1/pose2d/` |
 | `moppose pose-all` | people + pose + previews for every camera | as above |
+| **`moppose run <recording.yaml>`** | **everything for one recording (actor, 2D, sync, 3D, exports, 3D video)** | `results/<name>/` |
+| `moppose recon3d` | 3D stage of session1 incl. self-calibration and mop scale | `outputs/session1/3d/` |
+| `moppose calibrate-rig` | re-create the fixed camera rig (only if a camera moved) | `calibration/rig/rig.yaml` |
 
 ### Result files
 - `calibration/session1/camX_intrinsics.yaml`: lens model (`K`, `D`, size, RMS, coverage). Load it with `Camera.load(...)`.
@@ -188,25 +228,45 @@ src/moppose/
   pose2d/skeleton.py     the 23 canonical joints and bones
   pose2d/run.py          chunked, resumable pose extraction
   triangulate/dlt.py     weighted multi-view triangulation with bad-camera rejection
-  viz/                   calibration reports, skeleton drawing
-tests/                   synthetic calibration, triangulation, crop and selection tests
-calibration/session1/    saved camera calibrations (tag calib-session1)
+  multiview/data.py      2D tracks of all cameras on one clock
+  multiview/sync.py      time offsets (motion correlation + epipolar refinement)
+  multiview/selfcalib.py camera poses from the person (essential matrices, bundle adjustment)
+  multiview/world.py     floor frame, metric scale (mop)
+  multiview/pipeline.py  triangulation, left/right fix, bone outliers, smoothing
+  recording.py           recording + setup config, output names
+  automation.py          `moppose run`: resumable stages
+  viz/                   calibration reports, skeleton drawing, 3D plots, full-length 3D video
+tests/                   30 synthetic tests (calibration, triangulation, crops, sync, rig, automation)
+calibration/session1/    saved lens calibrations (tag calib-session1)
+calibration/rig/         the fixed camera rig in metres
+configs/setup.yaml       the fixed lab setup
+configs/recordings/      one config per recording (_template.yaml, mopping_session1.yaml)
+docs/AUTOMATION.md       processing a new recording
 docs/REMOTE_GPU.md       running the pose stage on another computer
 ```
 
 ## Conventions
 - Camera: `X_cam = R · X_world + t`; pixels (u, v) with the origin at the top-left.
 - All keypoints are stored in **raw fisheye pixels**. Triangulation undistorts them with the calibration.
-- The world frame will be set by the shared reference object: metres, Z up.
+- World frame: metres, **z up, floor at z = 0**, x from cam1 towards cam3, origin in the middle of
+  session1's walked area.
+- Time: the first camera (cam1) is the reference clock; for every other camera,
+  video time = reference time + offset.
 
 ## Next steps
-1. **Camera positions** (extrinsics): place one reference object seen by all 3 cameras, click its points in each view, then solve for each camera's pose in one world frame.
-2. **Time sync**: align the 3 separately recorded videos, using a shared event or the motion itself.
-3. **3D**: triangulate the 23 joints per frame (`triangulate/dlt.py`, ready and tested), filter, smooth.
-4. **Joint angles**: fit a skeleton with fixed bone lengths for the robot.
+1. **Right wrist:** use the RTMW cross-check where Sapiens2's wrist disagrees with the other cameras.
+2. **Joint angles:** fit a skeleton with constant bone lengths and export joint angles for the robot.
+3. **More precise scale:** a measured object (e.g. the ArUco sheet on the table) instead of the mop (±7%).
 
 ## Tests
 ```bash
 uv run pytest
 ```
-16 tests: synthetic fisheye calibration (two boards), the 0.5 px offset, triangulation with missing or bad views, the virtual crop round-trip on the real cam1 calibration, mopper selection.
+30 tests:
+- synthetic fisheye calibration (two boards) and the 0.5 px offset;
+- triangulation with missing or bad views;
+- the virtual crop round-trip on the real cam1 calibration;
+- mopper and actor selection;
+- time sync and rig self-calibration;
+- floor fit and left/right swap repair;
+- recording configs, stage skipping and the 3D video.

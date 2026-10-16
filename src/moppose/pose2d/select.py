@@ -117,3 +117,66 @@ def preview(image: np.ndarray, tr: Tracks, chain: list[int]) -> np.ndarray:
     cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 5)
     cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return out
+
+
+def _feet_series(tr: Tracks, tid: int) -> tuple[np.ndarray, np.ndarray]:
+    m = tr.track_id == tid
+    order = np.argsort(tr.t[m])
+    return tr.t[m][order], _feet(tr.bbox[m][order])
+
+
+def select_actor_multiview(tracks: dict[str, Tracks], cams: list, top_k: int = 4, max_err_px: float = 60.0,
+                           min_overlap: int = 30) -> tuple[dict[str, list[int]], dict]:
+    """Choose the actor's track in every camera using the calibrated rig.
+
+    For the most moving candidate tracks of each camera, every combination is checked: the
+    bottom-centre of the person box (≈ feet) is triangulated over the shared time and the
+    reprojection error measured. The same person seen by all cameras gives a small error;
+    different people give errors of hundreds of pixels. Time offsets between the cameras
+    (< 0.5 s) only add a little error here. The winning tracks are then extended by
+    stitching their fragments (select_mopper).
+
+    Returns {cam: chain of track ids} and diagnostics.
+    """
+    from itertools import product
+
+    from moppose.triangulate.dlt import triangulate
+
+    names = [c.name for c in cams]
+    cands = {}
+    for n in names:
+        s = summarize(tracks[n])
+        # movement x duration: the actor moves, seated people barely do, short false tracks are short
+        score = {tid: x.path_px * (x.t1 - x.t0) for tid, x in s.items()}
+        cands[n] = sorted(score, key=score.get, reverse=True)[:top_k]
+    series = {n: {tid: _feet_series(tracks[n], tid) for tid in cands[n]} for n in names}
+    results = []
+    for combo in product(*[cands[n] for n in names]):
+        t_ref, p_ref = series[names[0]][combo[0]]
+        uv = np.full((len(names), len(t_ref), 2), np.nan)
+        uv[0] = p_ref
+        for c in range(1, len(names)):
+            t_c, p_c = series[names[c]][combo[c]]
+            j = np.clip(np.searchsorted(t_c, t_ref), 1, len(t_c) - 1)
+            j = np.where(np.abs(t_c[j - 1] - t_ref) < np.abs(t_c[j] - t_ref), j - 1, j)
+            near = np.abs(t_c[j] - t_ref) < 0.1
+            uv[c, near] = p_c[j[near]]
+        ok = np.all(np.isfinite(uv[..., 0]), axis=0)
+        if ok.sum() < min_overlap:
+            continue
+        sel = np.flatnonzero(ok)[:: max(1, ok.sum() // 400)]
+        _, err = triangulate(cams, uv[:, sel], np.ones((len(names), len(sel))), min_conf=0.5, max_reproj_px=1e9)
+        results.append((float(np.nanmedian(err)), int(ok.sum()), combo))
+    if not results:
+        chains = {n: select_mopper(tracks[n]) for n in names}
+        return chains, {"method": "fallback: farthest walker (no overlapping candidates)"}
+    results.sort(key=lambda r: (r[0], -r[1]))
+    err, overlap, combo = results[0]
+    if err > max_err_px:
+        chains = {n: select_mopper(tracks[n]) for n in names}
+        return chains, {"method": "fallback: farthest walker", "best_multiview_err_px": err}
+    chains = {n: select_mopper(tracks[n], seed_id=int(tid)) for n, tid in zip(names, combo)}
+    info = {"method": "multiview", "seed_tracks": {n: int(t) for n, t in zip(names, combo)},
+            "feet_reproj_err_px": err, "overlap_frames": overlap,
+            "runner_up_err_px": results[1][0] if len(results) > 1 else None}
+    return chains, info

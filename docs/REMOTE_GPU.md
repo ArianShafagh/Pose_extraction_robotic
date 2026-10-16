@@ -77,6 +77,11 @@ uv run moppose pose-all --every 2       # 15 fps, half the time
 ```
 If the GPU runs out of memory: `uv run moppose pose2d --batch 1`.
 
+## New recordings (automation)
+For any new recording, write a config (copy `configs/recordings/_template.yaml`) and run everything with
+one command on the GPU computer: `uv run moppose run configs/recordings/<name>.yaml`.
+See [AUTOMATION.md](AUTOMATION.md). The final outputs land in `results/<name>/`; copy that folder back.
+
 ## Bring back
 Copy back the folder `outputs\session1\` into the same place on the laptop
 (the `part_*` chunk folders can be left out).

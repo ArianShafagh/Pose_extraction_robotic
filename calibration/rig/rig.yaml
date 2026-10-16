@@ -1,0 +1,201 @@
+# Fixed 3-camera rig of the lab: intrinsics + poses in metres.
+# Reused by `moppose run` for every recording. Re-create with `moppose calibrate-rig` if a camera moves.
+cameras:
+- name: cam1
+  model: fisheye
+  size:
+  - 1280
+  - 1024
+  K:
+  - - 911.4293472581675
+    - 0.0
+    - 595.6892330344499
+  - - 0.0
+    - 916.6933444122228
+    - 490.3805719889358
+  - - 0.0
+    - 0.0
+    - 1.0
+  D:
+  - -0.09665850970633552
+  - -0.03677430657553675
+  - -0.009157239002085213
+  - 0.06686111018066314
+  R:
+  - - -0.18517212865834107
+    - -0.9817267695456857
+    - -0.043861517592654345
+  - - -0.3134583928042149
+    - 0.1013082615715577
+    - -0.9441824358236851
+  - - 0.9313727066801654
+    - -0.16108751067274205
+    - -0.3264899618005458
+  t:
+  - -1.290108109747092
+  - 0.5043848177645763
+  - 6.994449505232231
+  rms: 0.8371614152362941
+  meta:
+    views_used: 78
+    views_rejected: 2
+    rms_by_model:
+      fisheye: 0.8371614152362941
+      pinhole: 0.8322203435120069
+    calib_videos:
+    - C:\Users\Arian\Desktop\camera\data\calib\cam1.mkv
+    calib_frame_maps:
+    - crop:
+      - 0
+      - 0
+      - 1280
+      - 1024
+      out_size:
+      - 1280
+      - 1024
+    validity:
+      covered_r: 550.5107019241354
+      corner_r: 867.7735417353048
+      monotonic_r: .inf
+      covered_frac: 0.6343944306290645
+      usable: true
+      work_inside: 0.9897670985963468
+      work_r: 726.3141297363511
+- name: cam3
+  model: fisheye
+  size:
+  - 1280
+  - 1024
+  K:
+  - - 931.550137355138
+    - 0.0
+    - 619.8717805114818
+  - - 0.0
+    - 939.2219658724406
+    - 540.5022788066503
+  - - 0.0
+    - 0.0
+    - 1.0
+  D:
+  - -0.11140145039349746
+  - 0.08459073448707816
+  - -0.1492894060145239
+  - 0.10570832097215759
+  R:
+  - - -0.11879440487046843
+    - 0.991449771063838
+    - 0.053992970180703904
+  - - 0.4885394798184236
+    - 0.10570369111488105
+    - -0.8661154116764312
+  - - -0.8644171828638157
+    - -0.07651196731330973
+    - -0.4969193625002266
+  t:
+  - 0.6899457003308989
+  - -0.1000570035619172
+  - 6.306942198880673
+  rms: 0.9456160523065843
+  meta:
+    views_used: 79
+    views_rejected: 1
+    rms_by_model:
+      fisheye: 0.9456160523065843
+      pinhole: 0.9260281874429898
+    calib_videos:
+    - C:\Users\Arian\Desktop\camera\data\calib\cam3.mkv
+    calib_frame_maps:
+    - crop:
+      - 284
+      - 0
+      - 1351
+      - 1080
+      out_size:
+      - 1280
+      - 1024
+    validity:
+      covered_r: 566.1933917872552
+      corner_r: 853.177577975572
+      monotonic_r: .inf
+      covered_frac: 0.6636290104232748
+      usable: true
+      work_inside: 0.9805405027036802
+      work_r: 750.3187177942601
+- name: cam4
+  model: fisheye
+  size:
+  - 1280
+  - 1024
+  K:
+  - - 901.874245213704
+    - 0.0
+    - 635.9502245513272
+  - - 0.0
+    - 907.4387784249369
+    - 505.31126491751155
+  - - 0.0
+    - 0.0
+    - 1.0
+  D:
+  - -0.1276173413181597
+  - 0.17523268639915932
+  - -0.5371858810584607
+  - 0.5480686209618535
+  R:
+  - - -0.8230536783195729
+    - 0.5570213257189607
+    - -0.11094992248268025
+  - - 0.2795402268027124
+    - 0.22723782782227736
+    - -0.9328559541567504
+  - - -0.4944086409072048
+    - -0.79880549090558
+    - -0.3427387977679009
+  t:
+  - 0.11163629902385108
+  - 0.8564980939462022
+  - 6.145291502023931
+  rms: 0.75502375796994
+  meta:
+    views_used: 77
+    views_rejected: 3
+    rms_by_model:
+      fisheye: 0.75502375796994
+      pinhole: 0.7503087492640049
+    calib_videos:
+    - C:\Users\Arian\Desktop\camera\data\calib\cam4.mkv
+    calib_frame_maps:
+    - crop:
+      - 0
+      - 0
+      - 1280
+      - 1024
+      out_size:
+      - 1280
+      - 1024
+    validity:
+      covered_r: 532.2403793466993
+      corner_r: 826.9450508691359
+      monotonic_r: .inf
+      covered_frac: 0.6436224254408488
+      usable: true
+      work_inside: 0.9591342650702094
+      work_r: 767.1063390562069
+world: metres, z up, floor at z = 0, x from cam1 towards cam3 (on the floor)
+scale:
+  method: mop
+  metres_per_unit: 12.181766149731839
+  length_m: 1.4
+  handle_rig_units: 0.1091795708152941
+  joint_reproj_px:
+  - 2.494694674247827
+  - 2.4289317277450286
+  mop_joint_rig:
+  - -0.050991793728478986
+  - 0.05746022885429878
+  - 0.5217369368323321
+source:
+  recording: session1 (mopping, 2026-08-06 16:03:28)
+  method: self-calibration from the person's 2D keypoints (Sapiens2), bundle adjustment,
+    floor from feet, scale from the mop handle
+  created: '2026-10-14'

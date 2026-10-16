@@ -11,7 +11,7 @@ from moppose.calib.camera import Camera
 from moppose.multiview.data import Track2D, on_common_clock
 from moppose.multiview.selfcalib import (bundle_adjust, normalized, pair_points, relative_pose, sampson,
                                          triangulate_all)
-from moppose.multiview.sync import coarse_offset
+from moppose.multiview.sync import coarse_offset, refine_offset
 from moppose.triangulate.dlt import triangulate
 
 
@@ -46,17 +46,8 @@ def calibrate_extrinsics(tracks: dict[str, Track2D], intrinsics: list[Camera], m
     poses = {b: relative_pose(*pair_points(xn, cf, 0, b, min_conf)[:2], thr)[:2] for b in range(1, len(names))}
     for b in range(1, len(names)):
         n = names[b]
-        best = (np.inf, offs[n])
-        for span, step in ((0.15, 0.01), (0.012, 0.002)):
-            for d in np.arange(best[1] - span, best[1] + span + 1e-9, step):
-                k, cc = tracks[n].sample(times + d)
-                xb = normalized([intrinsics[b]], k[None])[0]
-                ok = (cf[0] >= min_conf) & (cc >= min_conf) & np.all(np.isfinite(xb), -1) & np.all(np.isfinite(xn[0]), -1)
-                e = float(np.median(sampson(xn[0][ok], xb[ok], *poses[b])) * f)
-                if e < best[0]:
-                    best = (e, float(d))
-        offs[n] = best[1]
-        log(f"  refined offset {n}: {offs[n] * 1000:+.1f} ms (median epipolar error {best[0]:.2f} px)")
+        offs[n], e = refine_offset(ref, tracks[n], intrinsics[0], intrinsics[b], *poses[b], times, offs[n], min_conf)
+        log(f"  refined offset {n}: {offs[n] * 1000:+.1f} ms (median epipolar error {e:.2f} px)")
     uv, cf, xn = stack(offs)
     rig = [Camera(c.name, c.model, c.size, c.K, c.D, rms=c.rms, meta=dict(c.meta)) for c in intrinsics]
     for b in range(1, len(names)):

@@ -1,0 +1,68 @@
+# One file per recording. Copy this file, change `name` and `videos`, then run:
+#     uv run moppose run configs/recordings/<your file>.yaml
+# Paths are relative to the repo root. {name} and {cam} can be used in all output paths.
+
+name: my_action_2026-10-16            # used in every output name - letters, digits, _ and - only
+setup: configs/setup.yaml
+
+videos:                               # one video per camera of the setup, recorded at the same time
+  cam1: data/my_action/cam1.mkv
+  cam3: data/my_action/cam3.mkv
+  cam4: data/my_action/cam4.mkv
+
+time_range:                           # part of the videos to process (reference camera clock)
+  start_s: 0
+  end_s: null                         # null = until the end
+
+actor:                                # the one person performing the action
+  mode: auto                          # auto: the person who moves and is seen consistently by all cameras
+  track_ids:                          # optional manual choice per camera (see the {name}_{cam}_actor.jpg images)
+    cam1: null
+    cam3: null
+    cam4: null
+
+pose:
+  backend: sapiens2                   # main 2D model: sapiens2 | rtmw
+  model_size: 0.8b                    # sapiens2: 0.4b | 0.8b | 1b
+  cross_check: rtmw                   # second model for comparison (null to skip, saves time)
+  every: 2                            # use every 2nd frame (30 fps video -> 15 fps); 1 = all frames
+  flip_test: auto                     # auto: on with fp16 GPUs, off with fp32 (GTX 10xx)
+  batch: 2                            # crops per model call (lower if GPU memory runs out)
+
+sync:                                 # time offsets: video time of a camera = reference time + offset
+  max_offset_s: 3.0                   # search range
+  offsets_s:                          # null = estimate automatically; a number fixes it
+    cam3: null
+    cam4: null
+
+reconstruction:
+  min_conf: 0.5                       # ignore 2D joints below this confidence
+  max_reproj_px: 15                   # reject a camera's joint if it reprojects worse than this
+  bone_tolerance: 0.25                # drop a joint sample if its bone is >25 % off its median length
+  max_gap_s: 0.5                      # fill gaps up to this length
+  smooth_cutoff_hz: 4.0               # low-pass filter of the 3D trajectories
+
+video3d:                              # full-length 3D skeleton video
+  enabled: true
+  width: 1280
+  height: 720
+  view: fixed                         # fixed | orbit
+  azimuth_deg: -60                    # viewing direction around the vertical axis
+  elevation_deg: 25                   # viewing angle above the floor
+  distance_m: 6.5                     # distance of the virtual viewer from the scene centre
+  trail_s: 5                          # pelvis path drawn for the last N seconds
+  show_cameras: true
+
+outputs:
+  dir: results/{name}                 # final outputs
+  work_dir: outputs/{name}            # intermediate files (tracks, 2D pose); keep for resuming
+  files:
+    landmarks_csv: "{name}_landmarks3d.csv"
+    landmarks_npz: "{name}_landmarks3d.npz"
+    video_3d: "{name}_skeleton3d.mp4"
+    report: "{name}_report.json"
+    rig: "{name}_rig.yaml"
+    overview: "{name}_overview.png"
+    bone_lengths: "{name}_bone_lengths.png"
+    reprojection: "{name}_reprojection.jpg"
+    actor_preview: "{name}_{cam}_actor.jpg"

@@ -1,0 +1,11 @@
+# The fixed lab setup - written once, shared by every recording.
+# Paths are relative to the repo root.
+
+cameras: [cam1, cam3, cam4]          # the first one is the reference clock
+intrinsics_dir: calibration/session1 # camX_intrinsics.yaml (lens calibration, ChArUco)
+rig: calibration/rig/rig.yaml        # camera poses in metres (from `moppose calibrate-rig`)
+
+# Warnings that the rig no longer fits (a camera was moved / bumped -> run calibrate-rig again)
+quality:
+  max_median_reproj_px: 4.0          # median reprojection error of the 3D joints, per camera
+  max_floor_offset_m: 0.06           # median height of the heels above the floor

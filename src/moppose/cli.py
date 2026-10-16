@@ -590,5 +590,63 @@ def recon3d(
 
 
 
+# ---------------------------------------------------------------------------
+# automation
+# ---------------------------------------------------------------------------
+@app.command()
+def run(
+    recording: Path = typer.Argument(..., help="recording config, e.g. configs/recordings/my_action.yaml"),
+    start: str = typer.Option(None, "--from", help="redo this stage and everything after it"),
+    only: str = typer.Option(None, "--only", help="run just this stage"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="show what would run and the output file names"),
+):
+    """Whole pipeline for one recording: videos -> actor -> 2D pose -> sync -> 3D -> named outputs + 3D video.
+
+    Stages: check, people, actor, pose2d, sync, recon3d, export, video3d. Finished stages are skipped
+    (the run can be stopped and started again); a changed config section reruns only what depends on it.
+    """
+    from moppose.automation import STAGES, Runner
+    from moppose.recording import ConfigError, Recording
+
+    for st in (start, only):
+        if st is not None and st not in STAGES:
+            raise typer.BadParameter(f"unknown stage {st!r}; stages: {', '.join(STAGES)}")
+    try:
+        rec = Recording.load(recording)
+    except ConfigError as e:
+        typer.secho(f"config error: {e}", fg="red")
+        raise typer.Exit(2)
+    Runner(rec, log=typer.echo).run(start=start, only=only, dry_run=dry_run)
+    if not dry_run:
+        typer.secho(f"finished - results in {rec.out_dir}", fg="green", bold=True)
+
+
+@app.command("calibrate-rig")
+def calibrate_rig(
+    session: Path = SESSION,
+    out: Path = typer.Option(Path("calibration/rig/rig.yaml"), help="where to write the new rig"),
+):
+    """Re-create the fixed camera rig (poses in metres) from a session with a walking person.
+
+    Only needed if a camera was moved. Uses the session config's scale reference (e.g. the mop) and
+    writes the rig that `moppose run` reuses for every recording.
+    """
+    import shutil
+
+    import yaml
+
+    recon3d(session=session, video=False, video_start=0.0, video_len=0.0)
+    ses = SessionConfig.load(session)
+    src = yaml.safe_load(open(ses.session_dir / "3d" / "rig.yaml", encoding="utf-8"))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        shutil.copy(out, out.with_suffix(".previous.yaml"))
+    with open(out, "w", encoding="utf-8") as f:
+        f.write("# Fixed camera rig: intrinsics + poses in metres. Reused by `moppose run`.\n")
+        yaml.safe_dump({"cameras": src["cameras"], "world": src.get("world"), "scale": src.get("scale"),
+                        "source": {"session": str(session)}}, f, sort_keys=False)
+    typer.secho(f"rig written to {out}", fg="green", bold=True)
+
+
 if __name__ == "__main__":
     app()
